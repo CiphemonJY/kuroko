@@ -1,6 +1,6 @@
 <!doctype html>
 <meta charset="utf-8">
-<title>ShadowCast</title>
+<title>Kuroko</title>
 <style>
   :root{
     --glass: rgba(22,25,33,.55);
@@ -143,7 +143,7 @@
 <div id="hot"></div>
 
 <div id="bar">
-  <span id="title">ShadowCast</span>
+  <span id="title">Kuroko</span>
   <div id="drag"></div>
   <button class="wbtn" id="wTop"  title="Pin this window above others">&#8679;</button>
   <button class="wbtn" id="wMin"  title="Minimise">&#9472;</button>
@@ -196,7 +196,7 @@
 
 <div id="ui">
   <div>
-    <h2 style="color:#eee">ShadowCast</h2>
+    <h2 style="color:#eee">Kuroko</h2>
     <p>Captures through MediaFoundation, which is measurably lower latency on
        this dongle than the DirectShow path.</p>
     <button id="go">Start</button>
@@ -343,6 +343,9 @@ async function ensurePermission() {
 
 async function loadDevices() {
   devices = await navigator.mediaDevices.enumerateDevices();
+  // Matches the DONGLE's device label as the browser reports it (Genki's
+  // hardware is called ShadowCast), not this app's name. Left alone by the
+  // rename to Kuroko on purpose: change it and no capture device is found.
   const isSC = d => /shadowcast/i.test(d.label);
   const vids = devices.filter(d => d.kind === 'videoinput');
   const auds = devices.filter(d => d.kind === 'audioinput');
@@ -732,7 +735,7 @@ function screenshot() {
   c.toBlob(b => {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(b);
-    a.download = 'ShadowCast-' + new Date().toISOString().replace(/[:.]/g,'-').slice(0,19) + '.png';
+    a.download = 'Kuroko-' + new Date().toISOString().replace(/[:.]/g,'-').slice(0,19) + '.png';
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   }, 'image/png');
@@ -754,7 +757,7 @@ function toggleRecord() {
     const b = new Blob(chunks, {type: chunks[0]?.type || 'video/webm'});
     const a = document.createElement('a');
     a.href = URL.createObjectURL(b);
-    a.download = 'ShadowCast-' + new Date().toISOString().replace(/[:.]/g,'-').slice(0,19) + '.webm';
+    a.download = 'Kuroko-' + new Date().toISOString().replace(/[:.]/g,'-').slice(0,19) + '.webm';
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 10000);
     toast('Recording saved');

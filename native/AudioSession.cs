@@ -1,7 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
 
-namespace ShadowCast;
+namespace Kuroko;
 
 /// <summary>
 /// Per-application volume for the ffplay helper, via the Windows audio session

@@ -5,12 +5,24 @@ Reads the pad's own event device while driving it over HTTP. Checking the
 agent's self-reported state would prove nothing - it has to be observed from
 the other side of the kernel, exactly as a game would see it.
 """
-import glob
 import json
+import os
 import struct
+import sys
 import threading
 import time
 import urllib.request
+
+# Reach the pad the same way the pad decides to be reachable, rather than
+# assuming loopback: it binds its Tailscale address now, so a hardcoded
+# 127.0.0.1 gets connection-refused. Importing deckpad keeps one source of
+# truth - it only defines things at import time, nothing is opened.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from deckpad import TOKEN_PATH, _default_host   # noqa: E402
+
+BASE = os.environ.get("DECKPAD_URL") or "http://%s:8792" % _default_host()
+with open(TOKEN_PATH) as _f:
+    TOKEN = _f.read().strip()
 
 EV_KEY, EV_ABS = 0x01, 0x03
 BTN_A, BTN_B = 0x130, 0x131
@@ -25,7 +37,7 @@ def find_event_device():
     with open("/proc/bus/input/devices") as f:
         blocks = f.read().split("\n\n")
     for block in blocks:
-        if "ShadowCast Virtual Pad" not in block:
+        if "Kuroko Virtual Pad" not in block:
             continue
         m = re.search(r"\bevent(\d+)\b", block)
         if m:
@@ -61,9 +73,10 @@ time.sleep(0.5)
 
 
 def post(path, payload):
-    req = urllib.request.Request("http://127.0.0.1:8792" + path,
+    req = urllib.request.Request(BASE + path,
                                  data=json.dumps(payload).encode(),
-                                 headers={"Content-Type": "application/json"},
+                                 headers={"Content-Type": "application/json",
+                                          "X-Deckpad-Token": TOKEN},
                                  method="POST")
     return json.loads(urllib.request.urlopen(req, timeout=5).read())
 

@@ -7,5 +7,9 @@ __pycache__/
 
 # The published single-file exe is ~109 MB - over GitHub's 100 MB per-file
 # limit, and reproducible from source (see README).
-ShadowCast.exe
-ShadowCast.exe.bak
+#
+# Matched by PATTERN, not by name: this list previously said "ShadowCast.exe",
+# so renaming the app to Kuroko silently un-ignored the build output and the
+# push was rejected by GitHub. Nothing here is a checked-in binary.
+*.exe
+*.exe.bak

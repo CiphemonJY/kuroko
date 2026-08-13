@@ -4,7 +4,7 @@ using NAudio.CoreAudioApi;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 
-namespace ShadowCast;
+namespace Kuroko;
 
 /// <summary>
 /// In-process capture -> playback with NO resampling.
@@ -50,6 +50,9 @@ internal sealed class NativeAudio : IDisposable
     internal string RateInfo { get; private set; } = "";
 
     private long _drops, _pads;
+    // "ShadowCast" here is GENKI'S HARDWARE, not this app - it is the string
+    // Windows reports as the dongle's FriendlyName. It survived the rename to
+    // Kuroko deliberately: change it and audio capture finds no device.
     private string _deviceMatch = "ShadowCast";
     private int _recoverTicks;
 
@@ -76,6 +79,7 @@ internal sealed class NativeAudio : IDisposable
             ?? all.FirstOrDefault(d => d.FriendlyName.Contains("digital audio", StringComparison.OrdinalIgnoreCase));
     }
 
+    // Again the dongle's own name, not the app's - see _deviceMatch above.
     internal bool Start(string deviceMatch = "ShadowCast")
     {
         try { return StartCore(deviceMatch); }

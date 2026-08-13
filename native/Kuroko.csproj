@@ -5,12 +5,12 @@
     <TargetFramework>net9.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
-    <AssemblyName>ShadowCast</AssemblyName>
-    <RootNamespace>ShadowCast</RootNamespace>
+    <AssemblyName>Kuroko</AssemblyName>
+    <RootNamespace>Kuroko</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <ApplicationIcon>ShadowCast.ico</ApplicationIcon>
+    <ApplicationIcon>Kuroko.ico</ApplicationIcon>
     <!-- Self-contained so it runs without a matching .NET runtime installed,
-         and single-file so the deliverable is one ShadowCast.exe. -->
+         and single-file so the deliverable is one Kuroko.exe. -->
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
@@ -39,7 +39,7 @@
     <EmbeddedResource Include="web\mf-viewer.html" LogicalName="mf-viewer.html" />
     <!-- Embedded so the window icon still resolves under single-file publish,
          where reading the .ico off disk is not reliable. -->
-    <EmbeddedResource Include="ShadowCast.ico" LogicalName="ShadowCast.ico" />
+    <EmbeddedResource Include="Kuroko.ico" LogicalName="Kuroko.ico" />
   </ItemGroup>
 
 </Project>

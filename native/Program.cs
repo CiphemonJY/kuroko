@@ -7,7 +7,7 @@ using System.Windows.Forms;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 
-namespace ShadowCast;
+namespace Kuroko;
 
 /// <summary>Win32/DWM bits for the borderless glass window.</summary>
 internal static class Native
@@ -197,17 +197,19 @@ internal sealed class MainForm : Form
     // and page code cannot reach that stage. ffplay's aresample=async stretches
     // continuously instead. Video and audio are separate DirectShow devices, so
     // both can be open at once.
+    // "ShadowCast 2" is the DONGLE's name as Windows enumerates it, not this
+    // app's - it stays verbatim through the rename to Kuroko or capture breaks.
     private const string AudioDevice = "audio=Digital Audio Interface (2- ShadowCast 2)";
 
     public MainForm(string[] args)
     {
         _args = args;
-        Text = "ShadowCast";
+        Text = "Kuroko";
         Width = 1280;
         Height = 720;
         try
         {
-            using var s = typeof(MainForm).Assembly.GetManifestResourceStream("ShadowCast.ico");
+            using var s = typeof(MainForm).Assembly.GetManifestResourceStream("Kuroko.ico");
             if (s is not null) Icon = new System.Drawing.Icon(s);
         }
         catch { /* cosmetic only */ }
@@ -260,8 +262,8 @@ internal sealed class MainForm : Form
             catch (Exception ex)
             {
                 Log($"FATAL during init: {ex}");
-                MessageBox.Show($"ShadowCast failed to start:\n\n{ex.Message}\n\nSee shadowcast.log.",
-                                "ShadowCast", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show($"Kuroko failed to start:\n\n{ex.Message}\n\nSee kuroko.log.",
+                                "Kuroko", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 Close();
             }
         };
@@ -517,7 +519,7 @@ internal sealed class MainForm : Form
     private async Task InitAsync()
     {
         var userData = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ShadowCast", "WebView2");
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Kuroko", "WebView2");
         Directory.CreateDirectory(userData);
 
         // --disable-features=... is not needed; the defaults already use the
@@ -547,7 +549,7 @@ internal sealed class MainForm : Form
         };
 
         // Pin navigation to our own page. The permission check above guards an
-        // ORIGIN, and %LOCALAPPDATA%\ShadowCastUI is user-writable while
+        // ORIGIN, and %LOCALAPPDATA%\KurokoUI is user-writable while
         // FrameServer serves anything inside it - so a dropped evil.html would
         // share our origin and inherit silent camera+mic. Guarding the PAGE as
         // well as the origin is what actually closes that.
@@ -650,9 +652,9 @@ internal sealed class MainForm : Form
             // always means "already running", so say so and stop.
             Log($"FATAL: local server could not bind {ApiPort}: {ex.Message}");
             MessageBox.Show(
-                $"Port {ApiPort} is already in use - ShadowCast is probably already running.\n\n" +
+                $"Port {ApiPort} is already in use - Kuroko is probably already running.\n\n" +
                 "Close the other window, or start this one with -ApiPort <n>.",
-                "ShadowCast", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                "Kuroko", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             Close();
             return;
         }
@@ -684,7 +686,7 @@ internal sealed class MainForm : Form
     /// Kill audio helpers left behind by a previous run that was force-killed
     /// before the job object existed (or if assigning to it ever fails). Matches
     /// on ffplay processes holding OUR capture device, so nothing else is
-    /// touched - and this app is ShadowCast.exe, never ffplay.exe, so there is
+    /// touched - and this app is Kuroko.exe, never ffplay.exe, so there is
     /// no chance of matching our own command line.
     /// </summary>
     private static void KillOrphanedAudio()
@@ -701,11 +703,11 @@ internal sealed class MainForm : Form
 
     // Where screenshots and recordings land. Persisted so it survives restarts.
     private string _saveDir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.MyVideos), "ShadowCast");
+        Environment.GetFolderPath(Environment.SpecialFolder.MyVideos), "Kuroko");
 
     private static string SettingsPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "ShadowCast", "settings.json");
+        "Kuroko", "settings.json");
 
     private void LoadSettings()
     {
@@ -1119,11 +1121,11 @@ internal sealed class MainForm : Form
     // (rewritten every time, so an updated build always wins).
     private static string ExtractWeb()
     {
-        // NOT under %LOCALAPPDATA%\ShadowCast: that is also WebView2's user-data
+        // NOT under %LOCALAPPDATA%\Kuroko: that is also WebView2's user-data
         // folder, and mapping a virtual host into that tree is refused with
         // ERR_ACCESS_DENIED. Keep the UI folder completely separate.
         var dir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ShadowCastUI");
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "KurokoUI");
         Directory.CreateDirectory(dir);
         try
         {
@@ -1225,9 +1227,9 @@ internal sealed class MainForm : Form
         try
         {
             var dir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ShadowCast");
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Kuroko");
             Directory.CreateDirectory(dir);
-            File.AppendAllText(Path.Combine(dir, "shadowcast.log"),
+            File.AppendAllText(Path.Combine(dir, "kuroko.log"),
                 $"{DateTime.Now:HH:mm:ss}  {msg}{Environment.NewLine}");
         }
         catch { }

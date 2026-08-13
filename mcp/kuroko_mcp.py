@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ShadowCast MCP server - lets a vision model see the captured console screen.
+"""Kuroko MCP server - lets a vision model see the captured console screen.
 
 Speaks MCP over stdio as plain JSON-RPC. No third-party packages: the protocol
 surface needed here (initialize / tools/list / tools/call) is small, and a
@@ -7,7 +7,7 @@ dependency would have to be installed on every machine that runs this.
 
 It does NOT open the capture device. The dongle is exclusive - while the viewer
 is running nothing else can grab it - so frames are fetched from the viewer's
-local HTTP API (127.0.0.1:8791). Start ShadowCast.exe first.
+local HTTP API (127.0.0.1:8791). Start Kuroko.exe first.
 
 Tools
   get_screen        one frame as an image
@@ -15,7 +15,7 @@ Tools
   get_status        resolution, fps, capture state
 
 Register with an MCP client, e.g.:
-  claude mcp add shadowcast -- python "<this file>"
+  claude mcp add kuroko -- python "<this file>"
 """
 
 import base64
@@ -30,16 +30,16 @@ API = "http://127.0.0.1:8791"
 # create a virtual gamepad through /dev/uinput. Windows cannot be a Bluetooth
 # HID peripheral and a USB-C host-to-host cable does nothing, so this is the
 # route that actually works - and it is lower latency than Bluetooth.
-PAD = ""            # set from SHADOWCAST_PAD, e.g. http://steamdeck:8792
-PAD_TOKEN = ""      # set from SHADOWCAST_PAD_TOKEN (see ~/.deckpad_token on the Deck)
+PAD = ""            # set from KUROKO_PAD, e.g. http://steamdeck:8792
+PAD_TOKEN = ""      # set from KUROKO_PAD_TOKEN (see ~/.deckpad_token on the Deck)
 TIMEOUT = 15
 
 # Frames are the whole point of this server, so a failure has to explain itself
 # well enough that the caller knows whether to start the app, start the console,
 # or fix a port - not just "request failed".
-HINT = ("Could not reach ShadowCast at %s. Start ShadowCast.exe (the viewer must "
+HINT = ("Could not reach Kuroko at %s. Start Kuroko.exe (the viewer must "
         "be running and capturing - it owns the capture device exclusively). "
-        "If it runs on another port, set SHADOWCAST_API." % API)
+        "If it runs on another port, set KUROKO_API." % API)
 
 
 def _get(path):
@@ -60,7 +60,7 @@ def fetch_status():
 
 
 PAD_HINT = ("No controller configured. Run deck/deckpad.py on the Steam Deck "
-            "(sudo python3 deckpad.py) and set SHADOWCAST_PAD to its address, "
+            "(sudo python3 deckpad.py) and set KUROKO_PAD to its address, "
             "e.g. http://steamdeck:8792")
 
 
@@ -322,7 +322,7 @@ def main():
             respond(msg_id, {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "shadowcast", "version": "1.0.0"},
+                "serverInfo": {"name": "kuroko", "version": "1.0.0"},
             })
         elif method == "tools/list":
             respond(msg_id, {"tools": TOOLS})
@@ -343,7 +343,7 @@ def main():
 
 if __name__ == "__main__":
     import os
-    API = os.environ.get("SHADOWCAST_API", API).rstrip("/")
-    PAD = os.environ.get("SHADOWCAST_PAD", PAD).rstrip("/")
-    PAD_TOKEN = os.environ.get("SHADOWCAST_PAD_TOKEN", PAD_TOKEN)
+    API = os.environ.get("KUROKO_API", API).rstrip("/")
+    PAD = os.environ.get("KUROKO_PAD", PAD).rstrip("/")
+    PAD_TOKEN = os.environ.get("KUROKO_PAD_TOKEN", PAD_TOKEN)
     main()
