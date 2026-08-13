@@ -91,8 +91,15 @@ AXES = {
 DPAD = {"up": ("haty", -1), "down": ("haty", 1), "left": ("hatx", -1), "right": ("hatx", 1)}
 
 
+# The one place this name is defined. inputlog.py imports it to know which pad
+# is OURS and must never be recorded as human demonstration data - it cannot use
+# "is it a virtual device?" for that, because on a Steam Deck in Game Mode the
+# REAL pad is virtual too (Steam Input publishes its own uinput device).
+PAD_NAME = "Kuroko Virtual Pad"
+
+
 class VirtualPad:
-    def __init__(self, name="Kuroko Virtual Pad"):
+    def __init__(self, name=PAD_NAME):
         self.fd = os.open("/dev/uinput", os.O_WRONLY | os.O_NONBLOCK)
         self._lock = threading.Lock()
 

@@ -14,17 +14,26 @@ That also sidesteps SteamOS's KillUserProcesses=True, which kills anything
 backgrounded the moment the ssh session ends - a foreground pipe is the one
 shape that survives for as long as you want it to.
 
-WHICH DEVICES ARE LOGGED - three orthogonal tests, all required:
-  1. has a `js` handler          -> it is a joystick, not a lid switch
-  2. advertises BTN_SOUTH        -> it is a gamepad, not the motion sensors
-  3. sysfs is NOT under /devices/virtual/ -> it is real hardware
+WHICH DEVICES ARE LOGGED:
+  1. has a `js` handler   -> it is a joystick, not a lid switch
+  2. advertises BTN_SOUTH -> it is a gamepad, not the motion sensors
+  3. is not named as OUR pad (deckpad.PAD_NAME)
 
-Test 3 is the one that matters most: it excludes OUR OWN uinput pad. Logging
-that would record the agent's injected actions as if a human made them, and
-train the next policy on its own output - a silent, self-confirming corruption
-of exactly the kind these notes keep re-learning. There is a redundant
-exclude-by-name as well, because the cost of the check is nothing and the cost
-of the failure is a poisoned dataset you would not notice for weeks.
+Test 3 excludes our own injected pad. Logging that would record the agent's
+actions as if a human made them and train the next policy on its own output - a
+silent, self-confirming corruption you would not notice for weeks.
+
+It is done BY NAME, and that detail is the whole lesson of this file. The
+obvious test - "skip virtual devices, keep real hardware" - is wrong on a Steam
+Deck, and wrong in the exact situation that matters. In Game Mode, Steam takes
+the built-in controller exclusively (its raw node DISAPPEARS, mid-read, with
+ENODEV) and publishes its own `Microsoft X-Box 360 pad 0` through uinput. So the
+pad you must record is virtual, sits at /devices/virtual/ with an empty Phys,
+and is indistinguishable in kind from ours. Filtering on virtualness would find
+nothing during actual gameplay while looking perfectly healthy in Desktop Mode.
+
+Devices are re-scanned while running for the same reason: the set changes at
+precisely the moment you start playing.
 
 Timestamps come from the KERNEL (the input_event timeval), not from time.time()
 at read: the kernel stamps at the moment the input happens, so userspace
@@ -58,8 +67,9 @@ BTN_SOUTH = 0x130                       # every gamepad has an "A"; nothing else
 # dataset's column names could change between runs.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
-    from deckpad import AXES, BUTTONS
+    from deckpad import AXES, BUTTONS, PAD_NAME
 except ImportError:      # logger must still run if it is copied out on its own
+    PAD_NAME = "Kuroko Virtual Pad"
     BUTTONS = {"a": 0x130, "b": 0x131, "x": 0x134, "y": 0x133, "lb": 0x136,
                "rb": 0x137, "back": 0x13a, "start": 0x13b, "guide": 0x13c,
                "l3": 0x13d, "r3": 0x13e}
@@ -99,22 +109,19 @@ def has_bit(words, bit):
 
 
 def discover(include_virtual=False):
-    """Real gamepads only. See the module docstring for why each test exists."""
+    """Gamepads a human might be holding. See the docstring for why NOT virtualness."""
     found = []
     for name, sysfs, handlers, keys in parse_devices():
         ev = re.search(r"\b(event\d+)\b", handlers)
         if not ev:
             continue
-        virtual = "/devices/virtual/" in sysfs
         reasons = []
         if "js" not in handlers:
             reasons.append("no js handler")
         if not has_bit(keys, BTN_SOUTH):
             reasons.append("no BTN_SOUTH (not a gamepad)")
-        if virtual and not include_virtual:
-            reasons.append("virtual device (this is our own injected pad)")
-        if "Virtual Pad" in name and not include_virtual:
-            reasons.append("named as our virtual pad")
+        if name == PAD_NAME and not include_virtual:
+            reasons.append("this is OUR injected pad, not a human")
         if reasons:
             # Only report near-misses. A Deck has ~20 input devices (lid switch,
             # HDMI audio jacks, the power button) and listing why each one is not
@@ -140,21 +147,47 @@ def main():
     ap.add_argument("--out", default="-", help="output file (default stdout)")
     args = ap.parse_args()
 
-    if args.device:
+    explicit = bool(args.device)
+    if explicit:
         pads = [(os.path.basename(d), d) for d in args.device]
+        missing = [p for _n, p in pads if not os.path.exists(p)]
+        if missing:
+            # Event node NUMBERS are not stable - they are reassigned whenever
+            # devices re-enumerate, which happens every time Steam takes or
+            # releases the controller. Naming one by hand is how a run silently
+            # became a FileNotFoundError that looked like "no input happened".
+            raise SystemExit("no such device: %s - node numbers move around; "
+                             "prefer auto-discovery" % ", ".join(missing))
     else:
         pads = discover(args.include_virtual)
-    if not pads:
-        raise SystemExit("no real gamepad found - is the Deck's controller awake? "
-                         "(stderr above lists what was skipped and why)")
 
     # Line buffering: SteamOS can kill this process at session end, and a block
     # -buffered file would lose the tail of the session.
     out = sys.stdout if args.out == "-" else open(args.out, "w", buffering=1)
 
     fds = {}
-    for name, path in pads:
-        fds[os.open(path, os.O_RDONLY)] = (name, path)
+
+    def open_pads(pad_list):
+        opened = []
+        for name, path in pad_list:
+            if any(p == path for _n, p in fds.values()):
+                continue
+            try:
+                fds[os.open(path, os.O_RDONLY)] = (name, path)
+                opened.append(name)
+            except OSError as ex:
+                print(json.dumps({"kind": "open_failed", "device": name,
+                                  "path": path, "error": str(ex)}), file=sys.stderr)
+        return opened
+
+    open_pads(pads)
+    if not fds and explicit:
+        raise SystemExit("could not open any of the named devices")
+    if not fds:
+        print(json.dumps({"kind": "waiting", "note":
+                          "no gamepad yet - will keep scanning (Steam publishes "
+                          "its pad only once Game Mode or a game is running)"}),
+              file=sys.stderr)
 
     session = {
         "kind": "session",
@@ -168,18 +201,42 @@ def main():
     print(json.dumps(session), file=out, flush=True)
 
     deadline = time.monotonic() + args.seconds if args.seconds else None
+    last_scan = time.monotonic()
     count = 0
     try:
         while True:
             if deadline and time.monotonic() >= deadline:
                 break
+            # Re-scan periodically. The device set changes at exactly the moment
+            # play starts: entering Game Mode makes Steam seize the built-in pad
+            # (its node disappears) and publish a new virtual one.
+            if not explicit and time.monotonic() - last_scan > 2.0:
+                last_scan = time.monotonic()
+                fresh = open_pads(discover(args.include_virtual))
+                for n in fresh:
+                    print(json.dumps({"kind": "device_added", "device": n,
+                                      "t": time.time()}), file=out, flush=True)
+
             timeout = 0.5 if not deadline else max(0, deadline - time.monotonic())
             ready, _, _ = select.select(list(fds), [], [], min(0.5, timeout) or 0.5)
             for fd in ready:
-                # evdev always returns whole events; read several per syscall so
-                # high-rate stick motion does not cost one syscall per sample.
-                data = os.read(fd, EVENT_SIZE * 64)
                 name, _path = fds[fd]
+                try:
+                    # evdev returns whole events; read several per syscall so
+                    # high-rate stick motion is not one syscall per sample.
+                    data = os.read(fd, EVENT_SIZE * 64)
+                except OSError as ex:
+                    # ENODEV: the device was taken away mid-read. Not an error to
+                    # die on - it is what Steam does to the built-in pad when
+                    # Game Mode starts, and crashing here turned a real capture
+                    # into an empty file that read as "the user pressed nothing".
+                    print(json.dumps({"kind": "device_lost", "device": name,
+                                      "t": time.time(), "error": str(ex)}),
+                          file=out, flush=True)
+                    try: os.close(fd)
+                    except OSError: pass
+                    del fds[fd]
+                    continue
                 for off in range(0, len(data) - EVENT_SIZE + 1, EVENT_SIZE):
                     sec, usec, etype, code, value = struct.unpack(
                         "llHHi", data[off:off + EVENT_SIZE])
