@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <AssemblyName>ShadowCast</AssemblyName>
+    <RootNamespace>ShadowCast</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>ShadowCast.ico</ApplicationIcon>
+    <!-- Self-contained so it runs without a matching .NET runtime installed,
+         and single-file so the deliverable is one ShadowCast.exe. -->
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <!-- Workstation + concurrent GC keeps pauses short. Server GC would batch
+         collections into longer stop-the-world pauses, which in an in-process
+         audio path is an audible gap. -->
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+    <TieredPGO>true</TieredPGO>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
+    <!-- Managed WASAPI wrapper (MIT). Unlike ffplay this compiles INTO the exe,
+         so audio becomes in-process rather than a bundled child binary. -->
+    <PackageReference Include="NAudio" Version="2.2.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The page ships beside the exe and is mapped to a virtual https host,
+         which is what makes getUserMedia legal without any web server. -->
+    <!-- Embedded, not copied: the exe extracts it at startup so the whole app
+         is one file with nothing beside it. -->
+    <EmbeddedResource Include="web\mf-viewer.html" LogicalName="mf-viewer.html" />
+    <!-- Embedded so the window icon still resolves under single-file publish,
+         where reading the .ico off disk is not reliable. -->
+    <EmbeddedResource Include="ShadowCast.ico" LogicalName="ShadowCast.ico" />
+  </ItemGroup>
+
+</Project>

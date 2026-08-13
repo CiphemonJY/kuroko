@@ -1,0 +1,864 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>ShadowCast</title>
+<style>
+  :root{
+    --glass: rgba(22,25,33,.55);
+    --glass-strong: rgba(18,20,27,.78);
+    --hair: rgba(255,255,255,.10);
+    --txt: #e8ecf3;
+    --dim: #99a2b3;
+    --accent: #3b82f6;
+    --bar: 34px;   /* title bar height */
+  }
+  /* Transparent so the window's Mica backdrop shows through the letterbox
+     around the video. The video itself is opaque, so this costs nothing. */
+  html,body{margin:0;height:100%;background:transparent;color:var(--txt);
+            font:13px "Segoe UI Variable Display","Segoe UI",system-ui;overflow:hidden;
+            user-select:none;-webkit-user-select:none}
+
+  #stage{position:fixed;inset:0;display:block}
+  #v{width:100%;height:100%;object-fit:contain;background:transparent;display:block}
+  #v.sharp{filter:url(#cas)}
+
+  /* ---- title bar: the window is borderless, so the page draws it ---- */
+  #bar{position:fixed;top:0;left:0;right:0;height:var(--bar);z-index:30;
+       display:flex;align-items:center;gap:8px;padding:0 6px 0 12px;
+       background:linear-gradient(to bottom,rgba(14,16,22,.72),rgba(14,16,22,.28));
+       backdrop-filter:blur(18px) saturate(1.5);-webkit-backdrop-filter:blur(18px) saturate(1.5);
+       border-bottom:1px solid var(--hair);
+       opacity:0;transition:opacity .18s ease;pointer-events:none}
+  #bar.show{opacity:1;pointer-events:auto}
+  #title{font-size:12px;letter-spacing:.3px;color:var(--dim);flex:0 0 auto}
+  #drag{flex:1;height:100%}                     /* the draggable region */
+  .wbtn{width:38px;height:26px;border:0;border-radius:6px;background:transparent;
+        color:var(--dim);font-size:13px;cursor:pointer;display:grid;place-items:center}
+  .wbtn:hover{background:rgba(255,255,255,.10);color:var(--txt)}
+  .wbtn.close:hover{background:#e11d48;color:#fff}
+  .wbtn.on{background:var(--accent);color:#fff}
+
+  /* ---- resize edges (borderless window has none of its own) ---- */
+  .rz{position:fixed;z-index:29}
+  .rz.n{top:0;left:8px;right:8px;height:5px;cursor:ns-resize}
+  .rz.s{bottom:0;left:8px;right:8px;height:5px;cursor:ns-resize}
+  .rz.w{left:0;top:8px;bottom:8px;width:5px;cursor:ew-resize}
+  .rz.e{right:0;top:8px;bottom:8px;width:5px;cursor:ew-resize}
+  .rz.nw{top:0;left:0;width:10px;height:10px;cursor:nwse-resize}
+  .rz.ne{top:0;right:0;width:10px;height:10px;cursor:nesw-resize}
+  .rz.sw{bottom:0;left:0;width:10px;height:10px;cursor:nesw-resize}
+  .rz.se{bottom:0;right:0;width:10px;height:10px;cursor:nwse-resize}
+  /* No resize handles while fullscreen - an edge drag there would pull the
+     window back out of fullscreen for no reason. */
+  :fullscreen .rz{display:none}
+
+  /* CRT scanlines: a composited overlay costs nothing and never touches the
+     video pipeline, unlike a filter on the element itself. */
+  #scan{position:fixed;inset:0;pointer-events:none;display:none;
+        background:repeating-linear-gradient(to bottom,rgba(0,0,0,.38) 0 1px,transparent 1px 2px)}
+  #scan.show{display:block}
+
+  /* Menu: off-screen until the pointer reaches the top edge. #hot is the
+     trigger strip - without it there is nothing to hover once the bar is
+     hidden. */
+  /* hover strip that reveals the chrome; sits under the title bar */
+  #hot{position:fixed;top:0;left:0;right:0;height:calc(var(--bar) + 16px);z-index:9}
+
+  /* ---- glass menu ---- */
+  #menu{position:fixed;top:var(--bar);left:0;right:0;z-index:20;
+        transform:translateY(calc(-100% - var(--bar)));transition:transform .2s cubic-bezier(.2,.8,.3,1);
+        background:var(--glass);
+        backdrop-filter:blur(28px) saturate(1.6);-webkit-backdrop-filter:blur(28px) saturate(1.6);
+        border-bottom:1px solid var(--hair);
+        box-shadow:0 12px 32px rgba(0,0,0,.38);
+        display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 12px}
+  #menu.show{transform:translateY(0)}
+  #menu label{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.6px}
+  #savedir{color:var(--dim);font:11px ui-monospace;max-width:240px;overflow:hidden;
+           text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+  #savedir:hover{color:var(--txt);text-decoration:underline}
+  #menu select{background:rgba(255,255,255,.07);color:var(--txt);
+               border:1px solid var(--hair);border-radius:7px;
+               padding:5px 8px;font:12px system-ui;max-width:250px;outline:none}
+  #menu select:hover{background:rgba(255,255,255,.12)}
+  #menu button{background:rgba(255,255,255,.07);color:var(--txt);
+               border:1px solid var(--hair);border-radius:7px;
+               padding:6px 11px;font:12px system-ui;cursor:pointer;
+               transition:background .12s,border-color .12s}
+  #menu button:hover{background:rgba(255,255,255,.15)}
+  #menu button:active{transform:translateY(1px)}
+  #menu button.on{background:var(--accent);border-color:var(--accent);color:#fff;
+                  box-shadow:0 0 0 3px rgba(59,130,246,.22)}
+  /* Recording gets the conventional red rather than the generic accent, and a
+     pulsing dot so it is obvious at a glance that capture is running. */
+  #menu button.rec{background:#dc2626;border-color:#dc2626;color:#fff;
+                   box-shadow:0 0 0 3px rgba(220,38,38,.25)}
+  #menu button.rec::before{content:'';display:inline-block;width:7px;height:7px;border-radius:50%;
+                   background:#fff;margin-right:7px;vertical-align:middle;animation:pulse 1.4s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+  #menu button:disabled{opacity:.4;cursor:default}
+  .sep{width:1px;height:20px;background:var(--hair)}
+  .grow{flex:1}
+
+  /* volume slider */
+  #vol{-webkit-appearance:none;appearance:none;width:110px;height:4px;border-radius:3px;
+       background:rgba(255,255,255,.18);outline:none;cursor:pointer}
+  #vol::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;
+       background:var(--txt);border:0;box-shadow:0 1px 4px rgba(0,0,0,.5);cursor:pointer}
+  #vol::-webkit-slider-thumb:hover{background:#fff}
+  #volnum{color:var(--dim);font:11px ui-monospace;width:26px;text-align:right}
+
+  #hud{position:fixed;top:calc(var(--bar) + 8px);right:10px;
+       background:var(--glass-strong);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+       border:1px solid var(--hair);padding:5px 9px;border-radius:8px;
+       font:11px ui-monospace;color:var(--dim);display:none;white-space:pre;pointer-events:none}
+  #hud.show{display:block}
+  #toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(6px);
+         background:var(--glass-strong);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+         border:1px solid var(--hair);box-shadow:0 8px 28px rgba(0,0,0,.45);
+         padding:9px 16px;border-radius:10px;opacity:0;
+         transition:opacity .2s,transform .2s;pointer-events:none;white-space:pre-line}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+  #ui{position:fixed;inset:0;display:grid;place-items:center;text-align:center;padding:2em;z-index:25;
+      background:rgba(10,12,16,.72);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}
+  #ui.hide{display:none}
+  #ui button{font:15px system-ui;padding:.75em 1.6em;border:0;border-radius:9px;
+             background:var(--accent);color:#fff;cursor:pointer;box-shadow:0 6px 20px rgba(59,130,246,.35)}
+  p{max-width:34em;line-height:1.55;color:var(--dim)}
+  #err{color:#f87171;white-space:pre-wrap}
+</style>
+
+<!-- Contrast-adaptive sharpen. An SVG filter is GPU-composited, so it is far
+     cheaper than routing frames through a WebGL canvas (which would add a
+     frame of latency - the whole point of this viewer is not paying that). -->
+<svg width="0" height="0" style="position:absolute">
+  <filter id="cas" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB">
+    <feConvolveMatrix order="3" preserveAlpha="true" divisor="1"
+      kernelMatrix="0 -0.28 0  -0.28 2.12 -0.28  0 -0.28 0"/>
+  </filter>
+</svg>
+
+<video id="v" autoplay playsinline></video>
+<div id="scan"></div>
+<div id="hot"></div>
+
+<div id="bar">
+  <span id="title">ShadowCast</span>
+  <div id="drag"></div>
+  <button class="wbtn" id="wTop"  title="Pin this window above others">&#8679;</button>
+  <button class="wbtn" id="wMin"  title="Minimise">&#9472;</button>
+  <button class="wbtn" id="wMax"  title="Maximise">&#9634;</button>
+  <button class="wbtn close" id="wClose" title="Close">&#10005;</button>
+</div>
+
+<!-- The window is borderless, so it has no resize border of its own; these
+     strips ask the host to start a native resize drag. -->
+<div class="rz n"  data-edge="top"></div>
+<div class="rz s"  data-edge="bottom"></div>
+<div class="rz w"  data-edge="left"></div>
+<div class="rz e"  data-edge="right"></div>
+<div class="rz nw" data-edge="topleft"></div>
+<div class="rz ne" data-edge="topright"></div>
+<div class="rz sw" data-edge="bottomleft"></div>
+<div class="rz se" data-edge="bottomright"></div>
+
+<div id="menu">
+  <label>Video</label><select id="vsel"></select>
+  <label>Audio</label><select id="asel"></select>
+  <div class="sep"></div>
+  <button id="bFull">Fullscreen</button>
+  <button id="bPip" title="Keep this window above all others (p)">Always on top</button>
+  <button id="bShot">Screenshot</button>
+  <button id="bRec">Record</button>
+  <div class="sep"></div>
+  <button id="bSharp">Sharpen</button>
+  <button id="bScan">Scanlines</button>
+  <button id="bHud" title="Show resolution / fps / dropped frames (i)">Stats</button>
+  <button id="bMute">Mute</button>
+  <input id="vol" type="range" min="0" max="100" value="100" title="Volume (&uarr;/&darr;)">
+  <span id="volnum">100</span>
+  <button id="bBuf">Audio buffer</button>
+  <label>A/V</label>
+  <button id="avDown" title="Audio earlier (-10ms)">&minus;</button>
+  <span id="avnum" title="ffplay/browser: audio delay. native: audio buffer depth - raise it to stop occasional pops, at the cost of that much latency (movies tolerate this well)">0ms</span>
+  <button id="avUp" title="Audio later (+10ms)">+</button>
+  <button id="bFix" title="Drift correction: off = no processing (cleanest if drift is small); soft = uncapped stretch (kills pops, can fizz); hard = capped (less stretch, occasional pop)">Fix: smooth</button>
+  <button id="bEngine" title="Audio engine. browser = Chromium's own pipeline, the same route Genki Arcade used; ffplay = external process with configurable drift correction">Audio: ffplay</button>
+  <div class="sep"></div>
+  <button id="bFolder" title="Choose where screenshots and recordings are saved">Save folder&hellip;</button>
+  <span id="savedir" title="current save folder"></span>
+  <div class="grow"></div>
+  <button id="bRefresh" title="Re-scan devices">Rescan</button>
+</div>
+
+<div id="hud"></div>
+<div id="toast"></div>
+
+<div id="ui">
+  <div>
+    <h2 style="color:#eee">ShadowCast</h2>
+    <p>Captures through MediaFoundation, which is measurably lower latency on
+       this dongle than the DirectShow path.</p>
+    <button id="go">Start</button>
+    <p id="err"></p>
+  </div>
+</div>
+
+<script>
+const V = document.getElementById('v');
+const UI = document.getElementById('ui');
+const ERR = document.getElementById('err');
+const HUD = document.getElementById('hud');
+const TOAST = document.getElementById('toast');
+const MENU = document.getElementById('menu');
+const HOT = document.getElementById('hot');
+const vsel = document.getElementById('vsel');
+const asel = document.getElementById('asel');
+
+// Report JS errors to the host log. A single top-level error silently kills
+// every listener registered after it - which looks exactly like "the keyboard
+// shortcuts stopped working" with no other symptom.
+addEventListener('error', e => {
+  try {
+    window.chrome?.webview?.postMessage(JSON.stringify({
+      type: 'jserror',
+      msg: `${e.message} @ line ${e.lineno}:${e.colno}`,
+    }));
+  } catch {}
+});
+addEventListener('unhandledrejection', e => {
+  try {
+    window.chrome?.webview?.postMessage(JSON.stringify({
+      type: 'jserror', msg: 'unhandled promise: ' + (e.reason?.message || e.reason),
+    }));
+  } catch {}
+});
+
+const P = new URLSearchParams(location.search);
+// A separate ffplay process owns the audio pin (adaptive resampling avoids the
+// drift pops Chrome's resampler produces), so the page must not request audio.
+const EXTERNAL_AUDIO = P.get('audio') === 'external';
+const AUTOSTART = P.get('autostart') === '1';
+const HOST = window.chrome && window.chrome.webview;   // present in the native app
+
+let stream = null, recorder = null, chunks = [];
+let actx = null, gain = null, audioHint = 'interactive';
+let devices = [];
+
+const LS = {
+  get vid() { try { return localStorage.getItem('sc.vid') || ''; } catch { return ''; } },
+  set vid(v) { try { localStorage.setItem('sc.vid', v); } catch {} },
+  get aud() { try { return localStorage.getItem('sc.aud') || ''; } catch { return ''; } },
+  set aud(v) { try { localStorage.setItem('sc.aud', v); } catch {} },
+  // Stats overlay off by default - it is a diagnostic, not part of watching.
+  get hud() { try { return localStorage.getItem('sc.hud') === '1'; } catch { return false; } },
+  set hud(v) { try { localStorage.setItem('sc.hud', v ? '1' : '0'); } catch {} },
+};
+
+let hudOn = LS.hud;
+
+function toast(msg) {
+  TOAST.textContent = msg;
+  TOAST.classList.add('show');
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => TOAST.classList.remove('show'), 1900);
+}
+
+/* ---------- chrome show/hide (title bar + menu together) ---------- */
+const BAR = document.getElementById('bar');
+let hideT = null;
+function showMenu() {
+  MENU.classList.add('show');
+  BAR.classList.add('show');
+  clearTimeout(hideT);
+  hideT = setTimeout(() => { MENU.classList.remove('show'); BAR.classList.remove('show'); }, 2800);
+}
+HOT.addEventListener('mouseenter', showMenu);
+
+// Hold the chrome open for as long as the pointer is anywhere in the top strip,
+// measured live rather than relying on enter/leave events. A thin hover target
+// is fragile: in a docked or letterboxed window the pointer can sit "over" the
+// black bar and, as far as enter/leave is concerned, be nowhere at all - so the
+// menu would appear briefly and then vanish while still being pointed at.
+let inTop = false;
+addEventListener('mousemove', e => {
+  const zone = MENU.classList.contains('show')
+    ? (MENU.getBoundingClientRect().bottom + 30)   // whole open menu + margin
+    : 20;                                          // just the top edge
+  const nowInTop = e.clientY <= zone;
+  if (nowInTop) { clearTimeout(hideT); if (!MENU.classList.contains('show')) showMenu(); else keepOpen(); }
+  else if (inTop) showMenu();   // left the zone: start the hide countdown
+  inTop = nowInTop;
+});
+
+function keepOpen() { clearTimeout(hideT); }
+
+addEventListener('keydown', e => { if (e.key === 'Tab') showMenu(); });
+
+/* ---------- window controls (borderless host) ---------- */
+const send = o => HOST && HOST.postMessage(JSON.stringify(o));
+// Native drag: the host calls ReleaseCapture + WM_NCLBUTTONDOWN, which keeps
+// Aero snap, edge-snapping and per-monitor DPI working as they normally would.
+document.getElementById('drag').addEventListener('pointerdown', e => {
+  if (e.button === 0) send({type: 'win-drag', edge: 'caption'});
+});
+document.getElementById('drag').addEventListener('dblclick', () => {
+  if (document.fullscreenElement) { document.exitFullscreen(); return; }
+  send({type: 'win-max'});
+});
+document.querySelectorAll('.rz').forEach(el => {
+  el.addEventListener('pointerdown', e => {
+    if (e.button === 0) send({type: 'win-drag', edge: el.dataset.edge});
+  });
+});
+document.getElementById('wMin').onclick   = () => send({type: 'win-min'});
+// While fullscreen, restore should LEAVE fullscreen - otherwise it toggles a
+// maximise state you cannot see and the window looks stuck.
+document.getElementById('wMax').onclick   = () => {
+  if (document.fullscreenElement) { document.exitFullscreen(); return; }
+  send({type: 'win-max'});
+};
+document.getElementById('wClose').onclick = () => send({type: 'win-close'});
+document.getElementById('wTop').onclick   = () => send({type: 'win-top'});
+// Host reports the always-on-top state back so the button reflects reality.
+// Host reports the real state, so the title-bar pin and the menu button always
+// agree - they drive the same thing.
+window.scOnTop = on => {
+  document.getElementById('wTop').classList.toggle('on', !!on);
+  document.getElementById('bPip').classList.toggle('on', !!on);
+  toast(on ? 'Always on top' : 'Not on top');
+};
+if (!HOST) document.getElementById('bar').style.display = 'none';   // plain browser
+
+/* ---------- devices ---------- */
+// Labels are blank until permission is granted, so probe for BOTH kinds first.
+// Probing video only leaves every audio label empty, nothing matches, and the
+// viewer silently runs with no sound.
+async function ensurePermission() {
+  let probe;
+  try { probe = await navigator.mediaDevices.getUserMedia({video: true, audio: true}); }
+  catch { probe = await navigator.mediaDevices.getUserMedia({video: true}); }
+  probe.getTracks().forEach(t => t.stop());
+}
+
+async function loadDevices() {
+  devices = await navigator.mediaDevices.enumerateDevices();
+  const isSC = d => /shadowcast/i.test(d.label);
+  const vids = devices.filter(d => d.kind === 'videoinput');
+  const auds = devices.filter(d => d.kind === 'audioinput');
+
+  const fill = (sel, list, saved, auto) => {
+    sel.innerHTML = '';
+    list.forEach(d => {
+      const o = document.createElement('option');
+      o.value = d.deviceId;
+      o.textContent = d.label || '(unnamed device)';
+      sel.appendChild(o);
+    });
+    // Saved choice wins, then auto-detect, then first entry - so a wrong guess
+    // is always overridable from the menu.
+    const pick = list.find(d => d.deviceId === saved) || list.find(auto) || list[0];
+    if (pick) sel.value = pick.deviceId;
+    return pick;
+  };
+
+  const v = fill(vsel, vids, LS.vid, isSC);
+  const a = fill(asel, auds, LS.aud,
+                 d => isSC(d) || /digital audio/i.test(d.label));
+  return {v, a};
+}
+
+/* ---------- audio ---------- */
+// Played through Web Audio, not the <video> element: the element ties audio to
+// the video clock and stretches/drops samples to stay aligned, which tears on
+// this dongle. The context is built at the SOURCE rate so Chrome does not
+// resample and periodically snap to correct drift (heard as a pop).
+function routeAudio(strm, hint = 'interactive') {
+  const tracks = strm.getAudioTracks();
+  if (!tracks.length) return false;
+  try {
+    if (actx) { try { actx.close(); } catch {} }
+    const AC = window.AudioContext || window.webkitAudioContext;
+    const rate = tracks[0].getSettings().sampleRate;
+    try { actx = rate ? new AC({latencyHint: hint, sampleRate: rate}) : new AC({latencyHint: hint}); }
+    catch { actx = new AC({latencyHint: hint}); }
+    const src = actx.createMediaStreamSource(new MediaStream([tracks[0]]));
+    gain = actx.createGain();
+    src.connect(gain).connect(actx.destination);
+    if (actx.state === 'suspended') actx.resume();
+    V.muted = true;
+    return true;
+  } catch {
+    V.muted = false;
+    return true;
+  }
+}
+
+/* ---------- capture ---------- */
+async function startStream(videoId, audioId) {
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+
+  // 'ideal' is only a preference: when negotiation does not land, Chromium
+  // silently falls back to the 640x480 webcam default instead of failing, and
+  // the result just looks grainy with no error anywhere. Ask for it exactly,
+  // and only fall back to 'ideal' if the device genuinely cannot do it.
+  const exact = {
+    video: {
+      deviceId: videoId ? {exact: videoId} : undefined,
+      width:  {exact: 1920},
+      height: {exact: 1080},
+      frameRate: {ideal: 60},
+    },
+    audio: null,   // filled in below
+  };
+
+  const constraints = {
+    video: {
+      deviceId: videoId ? {exact: videoId} : undefined,
+      width:  {ideal: 1920},
+      height: {ideal: 1080},
+      frameRate: {ideal: 60},
+    },
+    // Request audio even when ffplay owns playback: MediaRecorder can only
+    // record tracks that are IN the stream, so without this every recording is
+    // silent. The dongle's audio pin allows multiple readers (verified: a
+    // second process captured it while ffplay held it), and the track is kept
+    // out of playback below, so this costs nothing audible.
+    // Every "enhancement" is DSP on the audio path, i.e. added delay.
+    audio: audioId ? {
+      deviceId: {exact: audioId},
+      echoCancellation: false, noiseSuppression: false, autoGainControl: false,
+      channelCount: 2,
+    } : false,
+  };
+
+  exact.audio = constraints.audio;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia(exact);
+  } catch {
+    stream = await navigator.mediaDevices.getUserMedia(constraints);
+  }
+
+  // Verify what we actually got. A silent drop to 640x480 is the failure mode
+  // here, so treat anything below 720p as a failure and retry once rather than
+  // showing an upscaled blur and saying nothing.
+  let got = stream.getVideoTracks()[0]?.getSettings?.() || {};
+  if ((got.width || 0) < 1280) {
+    stream.getTracks().forEach(t => t.stop());
+    await new Promise(r => setTimeout(r, 400));
+    try {
+      stream = await navigator.mediaDevices.getUserMedia(exact);
+      got = stream.getVideoTracks()[0]?.getSettings?.() || {};
+    } catch {
+      stream = await navigator.mediaDevices.getUserMedia(constraints);
+      got = stream.getVideoTracks()[0]?.getSettings?.() || {};
+    }
+    if ((got.width || 0) < 1280) toast(`Capture is only ${got.width}x${got.height} - press Rescan`);
+  }
+
+  V.srcObject = stream;
+  V.volume = 1;
+  // With external audio the track is present for recording only - muted here so
+  // it never double-plays alongside ffplay, and never routed through Web Audio
+  // (whose resampler is what caused the drift pops in the first place).
+  const hasAudio = EXTERNAL_AUDIO ? (V.muted = true, false) : routeAudio(stream, audioHint);
+  await V.play();
+
+  UI.classList.add('hide');
+  HUD.classList.toggle('show', hudOn);
+  updateHud(hasAudio);
+
+  // Report track counts to the host so "why is my recording silent?" is a log
+  // lookup instead of a guess.
+  if (HOST) HOST.postMessage(JSON.stringify({
+    type: 'status',
+    video: stream.getVideoTracks().length,
+    audio: stream.getAudioTracks().length,
+  }));
+}
+
+let hudTick = null;
+function updateHud(hasAudio) {
+  const vt = stream?.getVideoTracks()[0]?.getSettings() || {};
+  const at = stream?.getAudioTracks()[0]?.getSettings?.() || {};
+  const recA = (stream?.getAudioTracks().length ?? 0) > 0;
+  const audioInfo = EXTERNAL_AUDIO ? `  audio:ffplay  rec-audio:${recA ? 'on' : 'OFF'}`
+    : (hasAudio ? `  audio:${at.sampleRate || '?'}Hz${actx ? '/ctx' + Math.round(actx.sampleRate) : ''}`
+                : '  audio:NONE');
+  HUD.textContent = `${vt.width}x${vt.height} @ ${vt.frameRate ? Math.round(vt.frameRate) : '?'}fps` + audioInfo;
+
+  if (hudTick) V.cancelVideoFrameCallback?.(hudTick);
+  if (V.requestVideoFrameCallback) {
+    let n = 0, t0 = performance.now();
+    const tick = (now, meta) => {
+      n++;
+      if (now - t0 >= 2000) {
+        HUD.textContent = `${vt.width}x${vt.height} @ ${(n * 1000 / (now - t0)).toFixed(1)}fps`
+                        + audioInfo + `  dropped:${meta.droppedVideoFrames ?? 0}`;
+        n = 0; t0 = now;
+      }
+      hudTick = V.requestVideoFrameCallback(tick);
+    };
+    hudTick = V.requestVideoFrameCallback(tick);
+  }
+}
+
+async function start() {
+  ERR.textContent = '';
+  try {
+    await ensurePermission();
+    const {v, a} = await loadDevices();
+    if (!v) throw new Error('No video capture device found.\nIs the dongle plugged in and the console on?');
+    if (a && EXTERNAL_AUDIO) sendAudioDevice(a.label);
+    await startStream(v.deviceId, a?.deviceId);
+  } catch (e) {
+    UI.classList.remove('hide');
+    ERR.textContent = e.message || String(e);
+  }
+}
+
+// ffplay needs the DirectShow device NAME, which matches the browser's label.
+function sendAudioDevice(label) {
+  if (HOST && label) HOST.postMessage(JSON.stringify({type: 'audio-device', label}));
+}
+
+/* ---------- menu actions ---------- */
+vsel.addEventListener('change', async () => {
+  LS.vid = vsel.value;
+  try { await startStream(vsel.value, asel.value); toast('Video: ' + vsel.selectedOptions[0].textContent); }
+  catch (e) { toast('Failed: ' + e.message); }
+});
+asel.addEventListener('change', async () => {
+  LS.aud = asel.value;
+  const label = asel.selectedOptions[0].textContent;
+  if (EXTERNAL_AUDIO) { sendAudioDevice(label); toast('Audio: ' + label); }
+  else { try { await startStream(vsel.value, asel.value); toast('Audio: ' + label); } catch (e) { toast('Failed: ' + e.message); } }
+});
+document.getElementById('bRefresh').addEventListener('click', async () => {
+  await loadDevices(); toast('Devices rescanned');
+});
+
+/* ---------- save folder (native host only) ---------- */
+const savedirEl = document.getElementById('savedir');
+const bFolder = document.getElementById('bFolder');
+if (!HOST) {
+  // In a plain browser the destination is the browser's own download folder.
+  bFolder.disabled = true;
+  bFolder.title = 'Available in the desktop app';
+  savedirEl.textContent = 'browser downloads';
+} else {
+  bFolder.onclick = () => HOST.postMessage(JSON.stringify({type: 'pick-folder'}));
+  savedirEl.onclick = () => HOST.postMessage(JSON.stringify({type: 'open-folder'}));
+}
+// The host pushes the current folder after navigation and whenever it changes.
+addEventListener('sc-host', e => {
+  const m = e.data;
+  if (m && m.type === 'save-dir') {
+    savedirEl.textContent = m.dir; savedirEl.title = m.dir + '  (click to open)';
+    if (typeof m.volume === 'number') setVolumeUi(Math.round(m.volume * 100));
+    if (typeof m.audioDelayMs === 'number') { avMs = m.audioDelayMs; avnum.textContent = avMs + 'ms'; }
+    if (m.audioMode) audioMode = m.audioMode;
+    // Reflect the engine the HOST is actually running, rather than assuming.
+    // The menu used to say "ffplay" while native was live, which made the
+    // native path invisible and untunable.
+    if (m.audioEngine && ENGINES.includes(m.audioEngine)) {
+      engine = m.audioEngine;
+      applyEngine(false);
+    }
+    if (m.audioFix) { audioFix = m.audioFix; setFixLabel(); }
+  }
+});
+
+/* ---------- A/V delay ----------
+   Changing this restarts the audio process, so it is stepped rather than
+   dragged - each step costs a brief gap. Raise if audio arrives early, lower
+   if it lags the picture. */
+let avMs = 50, audioMode = 'ffplay';
+const avnum = document.getElementById('avnum');
+function nudgeAv(d) {
+  avMs = Math.max(0, Math.min(500, avMs + d));
+  avnum.textContent = avMs + 'ms';
+  send({type: 'audio-delay', ms: avMs});
+  toast('Audio delay ' + avMs + 'ms (audio restarting)');
+}
+document.getElementById('avUp').onclick = () => nudgeAv(+10);
+document.getElementById('avDown').onclick = () => nudgeAv(-10);
+
+/* Drift-correction mode, cycled by ear. The source measures clean, so "off"
+   is the honest baseline: any artifact heard with it off is NOT our filtering. */
+// 'Fix:' only applies to the ffplay engine - native converts nothing, so there
+// is no resampler to configure.
+const FIXES = ['smooth', 'hard', 'soft', 'off'];
+let audioFix = 'smooth';
+const bFix = document.getElementById('bFix');
+function setFixLabel() {
+  bFix.textContent = 'Fix: ' + audioFix;
+  bFix.classList.toggle('on', audioFix !== 'off');
+}
+/* ---------- audio engine: Chromium's pipeline vs ffplay ----------
+   Genki Arcade was Electron, i.e. exactly the 'browser' path, and had no audio
+   problems - so the Chromium pipeline demonstrably works on this hardware.
+   The pops seen earlier on this path were self-inflicted: routing through Web
+   Audio with the context pinned to the SOURCE rate (44100) forced Chrome to
+   resample its own output to the 48kHz device. Playing the track straight from
+   the media element - no Web Audio, no forced rate - is what Genki did, and
+   lets Chromium handle the clock-domain crossing with its own tuned logic. */
+// native  - in-process WASAPI, no resampling (48k in / 48k out). Default.
+// ffplay  - external process; resamples 44.1->48, tunable via Fix:
+// browser - Chromium's own pipeline, the route Genki Arcade used.
+const ENGINES = ['native', 'ffplay', 'browser'];
+let engine = 'native';
+const bEngine = document.getElementById('bEngine');
+
+function applyEngine(send_ = true) {
+  bEngine.textContent = 'Audio: ' + engine;
+  bEngine.classList.toggle('on', engine === 'native');
+  // 'Fix:' is meaningless unless ffplay is doing the resampling.
+  bFix.disabled = engine !== 'ffplay';
+  if (engine === 'browser') {
+    if (actx) { try { actx.close(); } catch {} actx = null; gain = null; }
+    V.muted = false;                     // element plays it, Genki-style
+    V.volume = (+volEl.value) / 100;
+  } else {
+    V.muted = true;                      // native or ffplay owns playback
+  }
+  if (send_) send({type: 'audio-engine', mode: engine});
+}
+
+bEngine.onclick = () => {
+  engine = ENGINES[(ENGINES.indexOf(engine) + 1) % ENGINES.length];
+  applyEngine();
+  toast('Audio engine: ' + engine + (engine === 'native' ? ' (no resampling)' : ''));
+};
+
+bFix.onclick = () => {
+  audioFix = FIXES[(FIXES.indexOf(audioFix) + 1) % FIXES.length];
+  setFixLabel();
+  send({type: 'audio-fix', mode: audioFix});
+  toast('Drift correction: ' + audioFix + ' (audio restarting)');
+};
+
+/* ---------- volume ---------- */
+// With external audio the level is applied to ffplay's own Windows audio
+// session (what the volume mixer shows for it), so this is genuinely the app's
+// volume rather than the system's. With browser audio it drives the gain node.
+const volEl = document.getElementById('vol');
+const volNum = document.getElementById('volnum');
+
+function setVolumeUi(v) { volEl.value = v; volNum.textContent = v; }
+
+function applyVolume(v, persist) {
+  v = Math.max(0, Math.min(100, Math.round(v)));
+  setVolumeUi(v);
+  if (engine === 'browser') {
+    V.volume = v / 100;                 // element owns playback, so scale it here
+  } else if (EXTERNAL_AUDIO) {
+    if (persist) send({type: 'volume', level: v / 100});
+  } else if (gain && actx) {
+    gain.gain.setTargetAtTime(v / 100, actx.currentTime, 0.02);
+  } else {
+    V.volume = v / 100;
+  }
+}
+
+// Throttle the host round-trip while dragging: each one walks the Windows audio
+// session list, which is far too heavy to run per pixel of slider movement.
+let volT = null;
+function volChanged(v) {
+  applyVolume(v, false);
+  if (!EXTERNAL_AUDIO) return;
+  clearTimeout(volT);
+  volT = setTimeout(() => send({type: 'volume', level: Math.round(v) / 100}), 90);
+}
+volEl.addEventListener('input', () => volChanged(+volEl.value));
+volEl.addEventListener('change', () => applyVolume(+volEl.value, true));
+
+function nudgeVolume(delta) {
+  const v = Math.max(0, Math.min(100, (+volEl.value) + delta));
+  volChanged(v);
+  toast('Volume ' + Math.round(v) + '%');
+}
+// Lets the host raise a toast without duplicating the UI in C#.
+window.scToast = toast;
+
+/* ---------- frame grab for the local API / MCP layer ----------
+   Returns a JPEG data URL of the CURRENT frame, scaled down. The video element
+   is the only place a decoded frame exists (the dongle is exclusive, so nothing
+   outside this process can capture one), which is why this has to live here. */
+window.scGrabFrame = (w, q) => {
+  if (!V.videoWidth) return '';
+  const scale = Math.min(1, (w || 1280) / V.videoWidth);
+  const c = document.createElement('canvas');
+  c.width  = Math.max(1, Math.round(V.videoWidth  * scale));
+  c.height = Math.max(1, Math.round(V.videoHeight * scale));
+  const ctx = c.getContext('2d');
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(V, 0, 0, c.width, c.height);
+  return c.toDataURL('image/jpeg', Math.max(0.2, Math.min(1, (q || 80) / 100)));
+};
+
+window.scStatus = () => {
+  const vt = stream?.getVideoTracks()[0]?.getSettings?.() || {};
+  return JSON.stringify({
+    capturing: !!(stream && V.videoWidth),
+    width: V.videoWidth || 0,
+    height: V.videoHeight || 0,
+    fps: vt.frameRate ? Math.round(vt.frameRate) : null,
+    device: vsel.selectedOptions[0]?.textContent || null,
+    audio: EXTERNAL_AUDIO ? 'ffplay' : (stream?.getAudioTracks().length ? 'browser' : 'none'),
+    recording: !!(recorder && recorder.state === 'recording'),
+    // With external audio the element MUST stay muted: if it also plays, the
+    // same sound arrives twice slightly offset and comb-filters into a fizz.
+    elementMuted: V.muted,
+    elementVolume: V.volume,
+    webAudioRouted: !!gain,
+    audioTracks: stream ? stream.getAudioTracks().length : 0,
+    // UI state, so a "the shortcut does nothing" report can be checked rather
+    // than guessed at.
+    engine: engine,
+    volumeUi: +volEl.value,
+    muted: mutedAt !== null,
+    sharpen: V.classList.contains('sharp'),
+    scanlines: document.getElementById('scan').classList.contains('show'),
+    statsOn: hudOn,
+  });
+};
+
+function screenshot() {
+  if (!V.videoWidth) return;
+  const c = document.createElement('canvas');
+  c.width = V.videoWidth; c.height = V.videoHeight;
+  c.getContext('2d').drawImage(V, 0, 0);
+  c.toBlob(b => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(b);
+    a.download = 'ShadowCast-' + new Date().toISOString().replace(/[:.]/g,'-').slice(0,19) + '.png';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  }, 'image/png');
+  toast('Screenshot saved');
+}
+
+function toggleRecord() {
+  if (!stream) return;
+  const btn = document.getElementById('bRec');
+  if (recorder && recorder.state === 'recording') { recorder.stop(); btn.classList.remove('rec'); return; }
+  chunks = [];
+  if (!stream.getAudioTracks().length) toast('Recording WITHOUT audio\n(no audio device selected)');
+  const types = ['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'];
+  const mime = types.find(t => MediaRecorder.isTypeSupported(t));
+  recorder = new MediaRecorder(stream, mime ? {mimeType: mime, videoBitsPerSecond: 20e6} : undefined);
+  recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+  recorder.onstop = () => {
+    document.getElementById('bRec').classList.remove('rec');
+    const b = new Blob(chunks, {type: chunks[0]?.type || 'video/webm'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(b);
+    a.download = 'ShadowCast-' + new Date().toISOString().replace(/[:.]/g,'-').slice(0,19) + '.webm';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+    toast('Recording saved');
+  };
+  recorder.start(1000);
+  btn.classList.add('rec');
+  toast('Recording...');
+}
+
+function toggleFullscreen() {
+  document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+}
+// Pin the real window above everything. Picture-in-picture was tried for this
+// and rejected: its window is browser chrome, so it shows a "Back to tab"
+// overlay on hover, which is meaningless in a desktop app. Pinning the actual
+// window keeps the real title bar, menu, resizing and snapping.
+function toggleOnTop() { send({type: 'win-top'}); }
+function toggleSharp() {
+  V.classList.toggle('sharp');
+  const on = V.classList.contains('sharp');
+  document.getElementById('bSharp').classList.toggle('on', on);
+  toast('Sharpening ' + (on ? 'on' : 'off'));
+}
+function toggleHud() {
+  hudOn = !hudOn;
+  LS.hud = hudOn;
+  HUD.classList.toggle('show', hudOn);
+  document.getElementById('bHud').classList.toggle('on', hudOn);
+  toast('Stats ' + (hudOn ? 'on' : 'off'));
+}
+
+function toggleScan() {
+  const el = document.getElementById('scan');
+  el.classList.toggle('show');
+  const on = el.classList.contains('show');
+  document.getElementById('bScan').classList.toggle('on', on);
+  toast('Scanlines ' + (on ? 'on' : 'off'));
+}
+// Mute has to act on whichever engine is actually playing. It used to toggle
+// V.muted unconditionally - but with ffplay driving playback the element is
+// ALREADY muted and silent, so the button did nothing at all. Driving the
+// volume path instead works for every engine, because applyVolume() already
+// knows where the audio is going.
+let mutedAt = null;   // slider value stashed while muted
+function toggleMute() {
+  const muted = mutedAt === null;
+  if (muted) {
+    mutedAt = +volEl.value || 100;
+    applyVolume(0, true);
+  } else {
+    applyVolume(mutedAt, true);
+    mutedAt = null;
+  }
+  document.getElementById('bMute').classList.toggle('on', muted);
+  toast(muted ? 'Muted' : 'Unmuted');
+}
+function toggleBuffer() {
+  if (EXTERNAL_AUDIO) { toast('Audio is handled by ffplay (adaptive)'); return; }
+  if (!stream) return;
+  audioHint = audioHint === 'interactive' ? 'playback' : 'interactive';
+  routeAudio(stream, audioHint);
+  document.getElementById('bBuf').classList.toggle('on', audioHint === 'playback');
+  toast('Audio buffer: ' + (audioHint === 'playback' ? 'large (fewer glitches)' : 'small (lowest latency)'));
+}
+
+document.getElementById('bFull').onclick  = toggleFullscreen;
+document.getElementById('bPip').onclick   = toggleOnTop;
+document.getElementById('bShot').onclick  = screenshot;
+document.getElementById('bRec').onclick   = toggleRecord;
+document.getElementById('bSharp').onclick = toggleSharp;
+document.getElementById('bScan').onclick  = toggleScan;
+document.getElementById('bHud').onclick   = toggleHud;
+document.getElementById('bHud').classList.toggle('on', hudOn);
+document.getElementById('bMute').onclick  = toggleMute;
+document.getElementById('bBuf').onclick   = toggleBuffer;
+document.getElementById('go').onclick     = start;
+
+addEventListener('keydown', e => {
+  if (e.target.tagName === 'SELECT' || e.target.id === 'vol') return;
+  switch (e.key) {
+    case 'ArrowUp':   nudgeVolume(+5); e.preventDefault(); return;
+    case 'ArrowDown': nudgeVolume(-5); e.preventDefault(); return;
+    case 'f': toggleFullscreen(); break;
+    case 'Escape': if (document.fullscreenElement) document.exitFullscreen(); break;
+    case 'p': toggleOnTop(); break;
+    case 's': screenshot(); break;
+    case 'r': case 'R': toggleRecord(); break;
+    case 'm': toggleMute(); break;
+    case 'x': toggleSharp(); break;
+    case 'c': toggleScan(); break;
+    case 'i': toggleHud(); break;
+    case 'b': toggleBuffer(); break;
+    case 'h': showMenu(); toast('Move the pointer to the top edge for the menu'); break;
+  }
+});
+
+/* ---------- keep button state in sync with reality ----------
+   These two can be entered or left without touching our buttons (Esc, the
+   title-bar restore, closing the PiP window), so drive them off the real
+   events rather than toggling a flag when the button is clicked. */
+document.addEventListener('fullscreenchange', () => {
+  document.getElementById('bFull').classList.toggle('on', !!document.fullscreenElement);
+});
+
+if (AUTOSTART) addEventListener('load', () => start());
+</script>
+

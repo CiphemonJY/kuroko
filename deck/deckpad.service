@@ -1,0 +1,13 @@
+[Unit]
+Description=ShadowCast virtual gamepad (uinput bridge for MCP input)
+After=graphical-session.target
+
+[Service]
+# -u: without unbuffered output the log stays empty until the process dies,
+# which makes every startup problem look like a silent failure.
+ExecStart=/usr/bin/python3 -u %h/deckpad.py --port 8792
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

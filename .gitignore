@@ -1,0 +1,11 @@
+# Build output
+native/bin/
+native/obj/
+native/publish/
+__pycache__/
+*.pyc
+
+# The published single-file exe is ~109 MB - over GitHub's 100 MB per-file
+# limit, and reproducible from source (see README).
+ShadowCast.exe
+ShadowCast.exe.bak
