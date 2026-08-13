@@ -3,8 +3,14 @@
 Draws at 256x256 with 4x supersampling, box-downsamples to each icon size, and
 writes a PNG-payload ICO (Vista+ reads PNG entries directly).
 
-Design: dark rounded square, teal screen, scanlines, white play triangle - bold
-shapes only, because anything finer turns to mush at 16px.
+Design: dark rounded square, teal screen, scanlines, and a black hooded figure
+standing in the frame - the kuroko, the kabuki stage assistant everyone agrees
+not to see, who is nevertheless the one moving things. That is what the app is:
+the screen you watch, plus the operator inside it.
+
+Bold shapes only, because anything finer turns to mush at 16px. The figure is a
+single continuous silhouette (dome flaring straight into a cloak, no neck, no
+face) - a head-plus-shoulders outline would just read as a generic user avatar.
 """
 import math, struct, zlib
 
@@ -39,18 +45,41 @@ def draw(N):
                 if a:
                     px[y][x] = (int(r * 0.78), int(g * 0.78), int(b * 0.78), a)
 
-    # play triangle
-    cx, cy = S * 0.5, (sy0 + sy1) / 2
-    h = (sy1 - sy0) * 0.42
-    w = h * 0.92
-    for y in range(int(cy - h), int(cy + h)):
-        t = abs(y - cy) / h
-        if t > 1:
-            continue
-        xe = cx - w * 0.45 + (1 - t) * w
-        for x in range(int(cx - w * 0.45), int(xe)):
+    # the kuroko: hooded dome flaring into a cloak, standing in the frame.
+    # Bottom-anchored to the screen edge so it reads as standing in shot rather
+    # than floating. The widest point stays well inside the screen (0.26*S vs a
+    # 0.345*S half-width), so it never reaches the rounded corners.
+    cx = (sx0 + sx1) / 2
+    sh = sy1 - sy0
+    # Sized so teal still frames the figure on all sides: at 16px the icon is
+    # read as "dark shape on teal", and a silhouette that fills the screen
+    # leaves nothing to read it against.
+    head_r = sh * 0.185
+    top = sy0 + sh * 0.21
+    dome_c = top + head_r           # centre of the hood dome
+    neck_y = dome_c + head_r * 0.62  # hood narrows before the shoulders
+    shl_y = dome_c + head_r * 1.55   # shoulders at full width
+    hem = sy1                        # cloak runs off the bottom of the screen
+    shl_w = head_r * 1.85            # shoulders ~1.85x the head, not a cone
+    hem_w = shl_w * 1.12
+    ink = (12, 14, 18, 255)
+
+    def smooth(t):                   # smoothstep, so the shoulder has no kink
+        return t * t * (3 - 2 * t)
+
+    t0 = (neck_y - dome_c) / head_r
+    neck_w = head_r * math.sqrt(max(0.0, 1 - t0 * t0))
+    for y in range(int(top), int(hem)):
+        if y <= neck_y:              # hood: a circle, narrowing past its middle
+            t = (y - dome_c) / head_r
+            hw = head_r * math.sqrt(max(0.0, 1 - t * t))
+        elif y <= shl_y:             # neck -> shoulders
+            hw = neck_w + (shl_w - neck_w) * smooth((y - neck_y) / (shl_y - neck_y))
+        else:                        # cloak: near-vertical, barely flaring
+            hw = shl_w + (hem_w - shl_w) * ((y - shl_y) / max(1.0, hem - shl_y))
+        for x in range(int(cx - hw), int(math.ceil(cx + hw))):
             if 0 <= x < S and 0 <= y < S:
-                px[y][x] = (255, 255, 255, 255)
+                px[y][x] = ink
 
     # stand
     rrect(S * 0.40, sy1, S * 0.60, S * 0.775, S * 0.012, (70, 78, 92, 255), px)
