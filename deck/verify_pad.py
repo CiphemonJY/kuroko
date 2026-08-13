@@ -45,6 +45,26 @@ def find_event_device():
     return None
 
 
+def post(path, payload):
+    req = urllib.request.Request(BASE + path,
+                                 data=json.dumps(payload).encode(),
+                                 headers={"Content-Type": "application/json",
+                                          "X-Deckpad-Token": TOKEN},
+                                 method="POST")
+    return json.loads(urllib.request.urlopen(req, timeout=5).read())
+
+
+# The pad is detached at rest now, so there is no device to find until we link
+# one. Remember whether it was already attached and put it back that way, so
+# running this test does not leave a controller sitting on js0.
+_st = json.loads(urllib.request.urlopen(urllib.request.Request(
+    BASE + "/status", headers={"X-Deckpad-Token": TOKEN}), timeout=5).read())
+WAS_ATTACHED = bool(_st.get("attached"))
+if not WAS_ATTACHED:
+    print("pad was detached; attaching for the test")
+    post("/attach", {"reason": "verify_pad"})
+    time.sleep(0.4)          # let udev create the node before we look for it
+
 dev = find_event_device()
 print("event device:", dev)
 if not dev:
@@ -72,15 +92,6 @@ t.start()
 time.sleep(0.5)
 
 
-def post(path, payload):
-    req = urllib.request.Request(BASE + path,
-                                 data=json.dumps(payload).encode(),
-                                 headers={"Content-Type": "application/json",
-                                          "X-Deckpad-Token": TOKEN},
-                                 method="POST")
-    return json.loads(urllib.request.urlopen(req, timeout=5).read())
-
-
 print("press a ->", post("/press", {"button": "a", "ms": 60}))
 time.sleep(0.3)
 print("press b ->", post("/press", {"button": "b", "ms": 60}))
@@ -103,3 +114,7 @@ stick = any(e[0] == "ABS_X" and e[2] != 0 for e in seen)
 print("\nRESULT: A press/release=%s/%s  B press=%s  stick moved=%s  (total key events=%d)"
       % (a_down, a_up, b_down, stick, len(keys)))
 print("VERDICT:", "PASS" if (a_down and a_up and b_down and stick) else "FAIL")
+
+if not WAS_ATTACHED:
+    post("/detach", {"reason": "verify_pad done"})
+    print("pad detached again (it was not attached before this test)")

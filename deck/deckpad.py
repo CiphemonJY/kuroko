@@ -16,11 +16,18 @@ root filesystem, so anything requiring a package install is a liability.
 It advertises the Xbox 360 pad USB IDs because Steam recognises that layout
 without any per-device configuration.
 
+The pad is DETACHED at rest: running this service creates no input device at
+all. Nothing appears to Steam, and js0 stays with the Deck's own controller,
+until something explicitly links it. That is the difference between a tool you
+leave running and one you have to remember to turn off.
+
 Run on the Deck (needs access to /dev/uinput, hence sudo):
     sudo python3 deckpad.py --port 8792
 
-Then from the PC:
+Then from the PC - link first, then drive:
+    curl -X POST http://<deck>:8792/attach
     curl -X POST http://<deck>:8792/press -d '{"button":"a"}'
+    curl -X POST http://<deck>:8792/detach
 """
 
 import argparse
@@ -177,6 +184,65 @@ class VirtualPad:
 
 
 PAD = None
+PAD_LOCK = threading.Lock()
+LAST_INPUT = 0.0
+IDLE_DETACH_S = 900.0     # 15 min; see detach_if_idle
+
+
+def attach(reason="explicit"):
+    """Create the virtual pad. NOTHING exists on the Deck until this runs.
+
+    Running the HTTP listener and owning a gamepad are deliberately separate
+    acts. A permanently-present uinput pad is not free: it took js0 - ahead of
+    the Deck's own controller on js1 - so a game assigning player 1 to the first
+    joystick it enumerates hands player 1 to a pad nobody is holding, and Steam
+    reshuffles controller defaults around a phantom device. The service can now
+    sit running all day and be genuinely invisible until something links it.
+    """
+    global PAD, LAST_INPUT
+    with PAD_LOCK:
+        if PAD is None:
+            PAD = VirtualPad()
+            LAST_INPUT = time.time()
+            print("pad ATTACHED (%s) - now visible to Steam as a controller" % reason,
+                  flush=True)
+        return PAD
+
+
+def detach(reason="explicit"):
+    """Destroy the virtual pad. Releases everything first - a detach that left a
+    button held would jam it with no device left to un-jam it through."""
+    global PAD
+    with PAD_LOCK:
+        if PAD is not None:
+            try:
+                PAD.close()
+            finally:
+                PAD = None
+            print("pad DETACHED (%s) - js0 released" % reason, flush=True)
+
+
+def detach_if_idle():
+    """Auto-detach after a long quiet spell.
+
+    The app detaches on close, but it cannot if it crashes or the network drops,
+    and the whole point is that a stale pad must not squat on js0 forever. The
+    timeout is deliberately generous: a model can legitimately think for minutes
+    between inputs, and detaching mid-session would be worse than the problem.
+    """
+    while True:
+        time.sleep(30)
+        if PAD is not None and LAST_INPUT and (time.time() - LAST_INPUT) > IDLE_DETACH_S:
+            detach("idle %.0fs" % IDLE_DETACH_S)
+
+
+def require_pad():
+    """Input endpoints need a pad; say so precisely rather than 500ing on None."""
+    global LAST_INPUT
+    if PAD is None:
+        return None
+    LAST_INPUT = time.time()
+    return PAD
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -207,12 +273,21 @@ class Handler(BaseHTTPRequestHandler):
         if not self._authed():
             return
         if self.path.startswith("/status"):
+            pad = PAD
             self._json(200, {"ok": True, "device": "Kuroko Virtual Pad",
+                             "attached": pad is not None,
                              "buttons": sorted(BUTTONS), "axes": sorted(AXES),
-                             "dpad": sorted(DPAD), "pressed": sorted(PAD.pressed),
-                             "axis_state": PAD.state})
+                             "dpad": sorted(DPAD),
+                             # No pad means no held state to report - and no
+                             # device on the Deck at all. Report empties rather
+                             # than failing: "is it linked?" is the question
+                             # /status exists to answer.
+                             "pressed": sorted(pad.pressed) if pad else [],
+                             "axis_state": pad.state if pad else {k: 0 for k in AXES},
+                             "idle_detach_s": IDLE_DETACH_S})
         else:
-            self._json(404, {"error": "try /status, /press, /hold, /axis, /sequence, /release_all"})
+            self._json(404, {"error": "try /status, /attach, /detach, /press, "
+                                      "/hold, /axis, /sequence, /release_all"})
 
     def do_POST(self):
         if not self._authed():
@@ -221,23 +296,41 @@ class Handler(BaseHTTPRequestHandler):
             b = self._body()
             p = self.path.rstrip("/")
 
+            if p == "/attach":
+                attach(b.get("reason", "api"))
+                return self._json(200, {"ok": True, "attached": True})
+            if p == "/detach":
+                detach(b.get("reason", "api"))
+                return self._json(200, {"ok": True, "attached": False})
+
+            pad = require_pad()
+            if pad is None:
+                # Deliberately NOT auto-attaching. Creating the pad makes Steam
+                # re-enumerate controllers, which is exactly the interruption
+                # this lifecycle exists to prevent - so it never happens as a
+                # side effect of an input arriving. Linking is its own act.
+                return self._json(409, {
+                    "ok": False, "attached": False,
+                    "error": "controller not linked - POST /attach first "
+                             "(or start deckpad with --auto-attach)"})
+
             if p == "/press":
-                PAD.tap(b["button"], int(b.get("ms", 80)))
+                pad.tap(b["button"], int(b.get("ms", 80)))
             elif p == "/hold":
-                PAD.button(b["button"], bool(b.get("down", True)))
+                pad.button(b["button"], bool(b.get("down", True)))
             elif p == "/axis":
-                PAD.axis(b["axis"], float(b.get("value", 0)))
+                pad.axis(b["axis"], float(b.get("value", 0)))
             elif p == "/release_all":
-                PAD.release_all()
+                pad.release_all()
             elif p == "/sequence":
                 for step in b.get("steps", []):
                     kind = step.get("type", "press")
                     if kind == "press":
-                        PAD.tap(step["button"], int(step.get("ms", 80)))
+                        pad.tap(step["button"], int(step.get("ms", 80)))
                     elif kind == "hold":
-                        PAD.button(step["button"], bool(step.get("down", True)))
+                        pad.button(step["button"], bool(step.get("down", True)))
                     elif kind == "axis":
-                        PAD.axis(step["axis"], float(step.get("value", 0)))
+                        pad.axis(step["axis"], float(step.get("value", 0)))
                     elif kind == "wait":
                         time.sleep(min(5.0, float(step.get("ms", 100)) / 1000.0))
                     else:
@@ -298,31 +391,44 @@ def main():
                     help="default: this Deck's Tailscale address (refuses to start "
                          "if Tailscale is down). Pass 0.0.0.0 only if you actually "
                          "want every network the Deck joins to reach a uinput bridge.")
+    ap.add_argument("--auto-attach", action="store_true",
+                    help="create the pad at startup, as it used to. Off by "
+                         "default: a pad that always exists takes js0 from the "
+                         "Deck's own controller and makes Steam re-shuffle "
+                         "controller defaults around a device nobody is holding.")
+    ap.add_argument("--idle-detach", type=float, default=IDLE_DETACH_S,
+                    help="auto-detach after this many idle seconds (0 disables)")
     args = ap.parse_args()
     host = args.host if args.host is not None else _default_host()
 
     if not os.access("/dev/uinput", os.W_OK):
         raise SystemExit("Cannot write /dev/uinput - run with sudo, or add a udev rule.")
 
+    globals()["IDLE_DETACH_S"] = args.idle_detach
     TOKEN = load_or_create_token()
-    PAD = VirtualPad()
+    if args.auto_attach:
+        attach("--auto-attach")
+    if args.idle_detach:
+        threading.Thread(target=detach_if_idle, daemon=True).start()
     srv = ThreadingHTTPServer((host, args.port), Handler)
     # Report what the socket ACTUALLY bound, not what was asked for. The two can
     # differ silently - passing None binds every interface - and "which address
     # is this listening on" is the one property here worth getting right.
     bound_host, bound_port = srv.socket.getsockname()[:2]
-    print("virtual gamepad created; listening on %s:%d" % (bound_host, bound_port))
+    print("deckpad listening on %s:%d" % (bound_host, bound_port))
     if bound_host == "0.0.0.0":
         print("WARNING: bound to ALL interfaces - every network this Deck joins "
               "can reach a uinput bridge, with only the token in front of it.")
-    print("Steam should now list 'Kuroko Virtual Pad' as a controller.")
+    print("pad is %s. Steam sees NO extra controller until it is attached."
+          % ("ATTACHED" if PAD else "detached"))
     print("auth token: written to %s (not echoed)" % TOKEN_PATH)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
-        PAD.close()
+        detach("shutdown")   # not PAD.close(): PAD is None whenever nothing is
+                             # linked, which is now the normal resting state.
 
 
 if __name__ == "__main__":

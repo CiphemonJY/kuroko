@@ -184,6 +184,7 @@
   <button id="avUp" title="Audio later (+10ms)">+</button>
   <button id="bFix" title="Drift correction: off = no processing (cleanest if drift is small); soft = uncapped stretch (kills pops, can fizz); hard = capped (less stretch, occasional pop)">Fix: smooth</button>
   <button id="bEngine" title="Audio engine. browser = Chromium's own pipeline, the same route Genki Arcade used; ffplay = external process with configurable drift correction">Audio: ffplay</button>
+  <button id="bPad" title="Link the virtual controller on the Steam Deck. While unlinked NO gamepad exists there at all - so Steam sees no extra controller and your own controls keep their layout and player slot. Link it only when you want the agent to be able to press buttons.">Pad: off</button>
   <div class="sep"></div>
   <button id="bFolder" title="Choose where screenshots and recordings are saved">Save folder&hellip;</button>
   <span id="savedir" title="current save folder"></span>
@@ -632,6 +633,31 @@ bEngine.onclick = () => {
   engine = ENGINES[(ENGINES.indexOf(engine) + 1) % ENGINES.length];
   applyEngine();
   toast('Audio engine: ' + engine + (engine === 'native' ? ' (no resampling)' : ''));
+};
+
+/* ---------- virtual controller link ----------
+   Deliberately a manual toggle rather than something that links itself. The pad
+   is a real uinput device on the Deck: while it exists it takes js0 ahead of the
+   Deck's own controller and Steam re-shuffles controller defaults around it. So
+   it must never appear as a side effect - only because someone asked. */
+const bPad = document.getElementById('bPad');
+let padLinked = false, padBusy = false;
+
+window.scPadState = (linked, note) => {
+  padLinked = !!linked;
+  padBusy = false;
+  bPad.textContent = 'Pad: ' + (padLinked ? 'linked' : 'off');
+  bPad.classList.toggle('on', padLinked);
+  bPad.disabled = false;
+  if (note) toast(note);
+};
+
+bPad.onclick = () => {
+  if (padBusy) return;                 // the round trip crosses the tailnet
+  padBusy = true;
+  bPad.disabled = true;
+  bPad.textContent = padLinked ? 'Pad: unlinking...' : 'Pad: linking...';
+  send({type: 'pad-link', link: !padLinked});
 };
 
 bFix.onclick = () => {
