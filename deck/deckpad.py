@@ -35,10 +35,11 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-# The PC has to reach this across the tailnet, so it cannot bind to loopback -
-# but the tailnet carries other people's machines, and an unauthenticated
-# endpoint here means anyone on it can press buttons on this device. A shared
-# token is the minimum that makes the open bind defensible.
+# The PC reaches this across the tailnet, so it cannot bind to loopback (see
+# _default_host) - but the tailnet carries other people's machines, and an
+# unauthenticated endpoint here means anyone on it can press buttons on this
+# device. Narrowing the bind is not sufficient on its own; the token is what
+# makes a non-loopback bind defensible.
 TOKEN_PATH = os.path.expanduser("~/.deckpad_token")
 
 
@@ -149,6 +150,10 @@ class VirtualPad:
             self.state[name.lower()] = raw
 
     def tap(self, name, ms=80):
+        # Clamp HERE: this is the trust boundary. A caller asking for a
+        # 9-hour button hold is either broken or hostile, and the actuator
+        # is physical - there is no undo once the game sees it.
+        ms = max(10, min(5000, int(ms)))
         self.button(name, True)
         time.sleep(max(0.01, ms / 1000.0))
         self.button(name, False)
@@ -245,23 +250,73 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"ok": False, "error": "%s: %s" % (type(e).__name__, e)})
 
 
+
+def _default_host():
+    """This Deck's Tailscale address - or refuse to start.
+
+    0.0.0.0 put a uinput bridge on every interface the Deck ever joins - a
+    token was the only thing between a cafe network and synthetic input on this
+    machine. The PC reaches us over Tailscale, so bind only there.
+
+    Read the interface directly: the `tailscale` CLI is not installed here, and
+    shelling out to a missing binary failed closed to 127.0.0.1, which is safe
+    but unreachable.
+
+    Exiting rather than falling back is the whole point, and it is not
+    theoretical: on the 2026-08-11 boot the unit started before tailscale0
+    existed, quietly bound 127.0.0.1, and looked healthy while the PC could not
+    reach it - which got "fixed" by restarting it by hand with --host 0.0.0.0,
+    undoing this entirely. A non-zero exit turns that into a visible failure
+    that systemd's Restart=on-failure retries until Tailscale is up.
+    """
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        packed = fcntl.ioctl(s.fileno(), 0x8915,  # SIOCGIFADDR
+                             struct.pack("256s", b"tailscale0"))
+        return socket.inet_ntoa(packed[20:24])
+    except OSError:
+        raise SystemExit(
+            "tailscale0 has no address - refusing to guess a bind address.\n"
+            "0.0.0.0 would expose this uinput bridge to every network the Deck\n"
+            "joins; 127.0.0.1 would look identical to 'working' while the PC\n"
+            "could not reach it. Under systemd this retries until Tailscale is\n"
+            "up. To override deliberately, pass --host."
+        )
+    finally:
+        s.close()
+
+
 def main():
     global PAD, TOKEN
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8792)
-    ap.add_argument("--host", default="0.0.0.0",
-                    help="0.0.0.0 so the PC can reach it; use 127.0.0.1 to lock it down")
+    # Resolved AFTER parsing, not as default=_default_host(): argparse evaluates
+    # defaults eagerly, so an explicit --host would still have to survive the
+    # Tailscale lookup - and the override exists precisely for when it fails.
+    ap.add_argument("--host", default=None,
+                    help="default: this Deck's Tailscale address (refuses to start "
+                         "if Tailscale is down). Pass 0.0.0.0 only if you actually "
+                         "want every network the Deck joins to reach a uinput bridge.")
     args = ap.parse_args()
+    host = args.host if args.host is not None else _default_host()
 
     if not os.access("/dev/uinput", os.W_OK):
         raise SystemExit("Cannot write /dev/uinput - run with sudo, or add a udev rule.")
 
     TOKEN = load_or_create_token()
     PAD = VirtualPad()
-    print("virtual gamepad created; listening on %s:%d" % (args.host, args.port))
+    srv = ThreadingHTTPServer((host, args.port), Handler)
+    # Report what the socket ACTUALLY bound, not what was asked for. The two can
+    # differ silently - passing None binds every interface - and "which address
+    # is this listening on" is the one property here worth getting right.
+    bound_host, bound_port = srv.socket.getsockname()[:2]
+    print("virtual gamepad created; listening on %s:%d" % (bound_host, bound_port))
+    if bound_host == "0.0.0.0":
+        print("WARNING: bound to ALL interfaces - every network this Deck joins "
+              "can reach a uinput bridge, with only the token in front of it.")
     print("Steam should now list 'ShadowCast Virtual Pad' as a controller.")
-    print("auth token (%s): %s" % (TOKEN_PATH, TOKEN))
-    srv = ThreadingHTTPServer((args.host, args.port), Handler)
+    print("auth token: written to %s (not echoed)" % TOKEN_PATH)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
