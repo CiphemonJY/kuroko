@@ -183,7 +183,7 @@
   <span id="avnum" title="ffplay/browser: audio delay. native: audio buffer depth - raise it to stop occasional pops, at the cost of that much latency (movies tolerate this well)">0ms</span>
   <button id="avUp" title="Audio later (+10ms)">+</button>
   <button id="bFix" title="Drift correction: off = no processing (cleanest if drift is small); soft = uncapped stretch (kills pops, can fizz); hard = capped (less stretch, occasional pop)">Fix: smooth</button>
-  <button id="bEngine" title="Audio engine. browser = Chromium's own pipeline, the same route Genki Arcade used; ffplay = external process with configurable drift correction">Audio: ffplay</button>
+  <button id="bEngine" title="Audio engine. browser = Chromium's own pipeline, the same route Genki Arcade used; ffplay = external process with configurable drift correction">Audio: native</button>
   <button id="bPad" title="Link the virtual controller on the Steam Deck. While unlinked NO gamepad exists there at all - so Steam sees no extra controller and your own controls keep their layout and player slot. Link it only when you want the agent to be able to press buttons.">Pad: off</button>
   <div class="sep"></div>
   <button id="bFolder" title="Choose where screenshots and recordings are saved">Save folder&hellip;</button>
@@ -561,7 +561,8 @@ addEventListener('sc-host', e => {
     savedirEl.textContent = m.dir; savedirEl.title = m.dir + '  (click to open)';
     if (typeof m.volume === 'number') setVolumeUi(Math.round(m.volume * 100));
     if (typeof m.audioDelayMs === 'number') { avMs = m.audioDelayMs; avnum.textContent = avMs + 'ms'; }
-    if (m.audioMode) audioMode = m.audioMode;
+    // (the host used to send the engine as `audioMode`, which landed in a
+    //  variable nothing read; it now sends `audioEngine`, handled below)
     // Reflect the engine the HOST is actually running, rather than assuming.
     // The menu used to say "ffplay" while native was live, which made the
     // native path invisible and untunable.
@@ -577,7 +578,7 @@ addEventListener('sc-host', e => {
    Changing this restarts the audio process, so it is stepped rather than
    dragged - each step costs a brief gap. Raise if audio arrives early, lower
    if it lags the picture. */
-let avMs = 50, audioMode = 'ffplay';
+let avMs = 50;
 const avnum = document.getElementById('avnum');
 function nudgeAv(d) {
   avMs = Math.max(0, Math.min(500, avMs + d));
