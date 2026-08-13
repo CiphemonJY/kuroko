@@ -870,9 +870,10 @@ internal sealed class MainForm : Form
     // reports, so it can be passed straight through.
     private void OnWebMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
+        var json = "";
         try
         {
-            var json = e.TryGetWebMessageAsString();
+            json = e.TryGetWebMessageAsString();
             var m = System.Text.Json.JsonDocument.Parse(json).RootElement;
             var type = m.GetProperty("type").GetString();
 
@@ -899,6 +900,14 @@ internal sealed class MainForm : Form
                 case "pad-link":
                     {
                         var link = m.TryGetProperty("link", out var lEl) && lEl.GetBoolean();
+                        // Logged on ARRIVAL, before anything can fail. This is
+                        // what splits the two possibilities: no line at all means
+                        // the click never reached the host (a page problem); a
+                        // line followed by a failure means the host tried and
+                        // could not (config or the Deck).
+                        Log($"pad-link message received: link={link}, padUrl=" +
+                            (string.IsNullOrWhiteSpace(_padUrl) ? "<unset>" : _padUrl) +
+                            $", token={(string.IsNullOrWhiteSpace(PadToken()) ? "<missing>" : "present")}");
                         _ = Task.Run(async () =>
                         {
                             var (ok, note) = await PadLinkAsync(link);
@@ -1019,7 +1028,11 @@ internal sealed class MainForm : Form
             _audioDevice = wanted;
             if (!BrowserAudio) { StopAudio(); StartAudio(); }
         }
-        catch { /* a malformed message must not take the viewer down */ }
+        // A malformed message must not take the viewer down - but swallowing it
+        // silently means a menu button that does nothing leaves NO evidence
+        // anywhere, which is exactly how the pad-link button became
+        // undiagnosable. Same defect this file already fixed for settings loads.
+        catch (Exception ex) { Log($"web message failed ({json}): {ex.Message}"); }
     }
 
     // Chrome reports audio inputs as "Default - <name> (vvvv:pppp)", but
@@ -1256,7 +1269,13 @@ internal sealed class MainForm : Form
                 volume = _volume,
                 external = !BrowserAudio,
                 audioDelayMs = _audioDelayMs,
-                audioMode = _audioEngine,
+                // Was `audioMode`, which the page assigned to a variable nothing
+                // ever read - so the engine never reached the menu and its label
+                // stayed at the HTML default, "Audio: ffplay", while native was
+                // running. The page-side half of this fix was written long ago
+                // and reads `audioEngine`; the host was never updated to send
+                // it, so the fix sat there landing on nothing.
+                audioEngine = _audioEngine,
                 audioFix = _audioFix,
             });
             await _web.CoreWebView2.ExecuteScriptAsync(
