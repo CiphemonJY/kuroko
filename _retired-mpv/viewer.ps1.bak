@@ -1,0 +1,120 @@
+# ShadowCast / capture-device viewer.
+# Native low-latency window via ffplay. No browser, no Electron.
+# Auto-detects a capture device; falls back to a picker if it can't decide.
+#
+#   viewer.ps1              launch the viewer
+#   viewer.ps1 -ListOnly    just show what capture devices are connected
+
+param([switch]$ListOnly)
+
+$ErrorActionPreference = 'Stop'
+
+function Get-DShowDevices {
+    # ffmpeg prints the device list to stderr; capture it to a file to avoid
+    # PowerShell 5.1 wrapping native stderr in ErrorRecords.
+    $tmp = Join-Path $env:TEMP "dshow_devices.txt"
+    $ff = (Get-Command ffmpeg -EA SilentlyContinue).Source
+    if (-not $ff) {
+        $ff = "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-9.0-full_build\bin\ffmpeg.exe"
+    }
+    if (-not (Test-Path $ff)) { throw "ffmpeg not found. Install it or add it to PATH." }
+    Start-Process $ff -ArgumentList '-hide_banner','-list_devices','true','-f','dshow','-i','dummy' `
+        -Wait -NoNewWindow -RedirectStandardError $tmp | Out-Null
+    $lines = Get-Content $tmp -EA SilentlyContinue
+    Remove-Item $tmp -EA SilentlyContinue
+
+    $video = @(); $audio = @(); $unknown = @(); $section = ''
+    foreach ($l in $lines) {
+        # Skip the alternative-name lines outright - they also contain quotes.
+        if ($l -match 'Alternative name') { continue }
+
+        # ffmpeg 9.x format: '"Device Name" (video)' / '(audio)' / '(none)'
+        if ($l -match '"([^"]+)"\s*\((video|audio|none)\)') {
+            switch ($Matches[2]) {
+                'video' { $video   += $Matches[1] }
+                'audio' { $audio   += $Matches[1] }
+                'none'  { $unknown += $Matches[1] }
+            }
+            continue
+        }
+
+        # Older ffmpeg format: section headers then quoted names.
+        if ($l -match 'DirectShow video devices') { $section = 'v'; continue }
+        if ($l -match 'DirectShow audio devices') { $section = 'a'; continue }
+        if ($l -match '"([^"]+)"') {
+            if     ($section -eq 'v') { $video += $Matches[1] }
+            elseif ($section -eq 'a') { $audio += $Matches[1] }
+        }
+    }
+    # Devices ffmpeg can't classify (e.g. virtual cameras) are video candidates,
+    # ranked last so a real capture device always wins.
+    $video += $unknown
+    return @{ Video = $video; Audio = $audio; Raw = $lines }
+}
+
+function Select-Device($list, $label, $preferPattern) {
+    if ($list.Count -eq 0) { return $null }
+    # Prefer a capture-looking device over built-in webcams.
+    $match = $list | Where-Object { $_ -match $preferPattern } | Select-Object -First 1
+    if ($match) { return $match }
+    if ($list.Count -eq 1) { return $list[0] }
+    Write-Host "`nSelect $label device:" -ForegroundColor Cyan
+    for ($i = 0; $i -lt $list.Count; $i++) { Write-Host ("  [{0}] {1}" -f $i, $list[$i]) }
+    $sel = Read-Host "Number (Enter = 0, 's' = skip)"
+    if ($sel -eq 's') { return $null }
+    if ([string]::IsNullOrWhiteSpace($sel)) { $sel = 0 }
+    return $list[[int]$sel]
+}
+
+$dev = Get-DShowDevices
+
+if ($ListOnly) {
+    Write-Host "`nVideo devices ($($dev.Video.Count)):" -ForegroundColor Cyan
+    if ($dev.Video.Count) { $dev.Video | ForEach-Object { Write-Host "  - $_" } } else { Write-Host "  (none)" }
+    Write-Host "`nAudio devices ($($dev.Audio.Count)):" -ForegroundColor Cyan
+    if ($dev.Audio.Count) { $dev.Audio | ForEach-Object { Write-Host "  - $_" } } else { Write-Host "  (none)" }
+    exit 0
+}
+
+if ($dev.Video.Count -eq 0) {
+    Write-Host "No DirectShow video devices found." -ForegroundColor Red
+    Write-Host "Plug the ShadowCast in and try again." -ForegroundColor Yellow
+    Write-Host "`n--- raw ffmpeg output ---"; $dev.Raw | Select-Object -Last 25
+    Read-Host "`nEnter to close"; exit 1
+}
+
+# Capture dongles usually identify with one of these; webcams get deprioritised.
+$vPattern = 'shadowcast|genki|capture|hdmi|usb video|hd camera|mirabox|elgato'
+$aPattern = 'shadowcast|genki|capture|hdmi|digital audio'
+
+$vid = Select-Device $dev.Video $vPattern.Split('|')[0] $vPattern
+$aud = Select-Device $dev.Audio 'audio' $aPattern
+
+Write-Host "`nVideo: $vid"     -ForegroundColor Green
+Write-Host "Audio: $(if ($aud) { $aud } else { '(none)' })" -ForegroundColor Green
+
+$input = if ($aud) { "video=$vid`:audio=$aud" } else { "video=$vid" }
+
+$ffplay = (Get-Command ffplay -EA SilentlyContinue).Source
+if (-not $ffplay) {
+    $ffplay = "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-9.0-full_build\bin\ffplay.exe"
+}
+
+# Low-latency flags: don't buffer, don't pre-analyse, drop late frames rather
+# than queueing them. rtbufsize guards against dropped-frame warnings on USB.
+$args = @(
+    '-hide_banner', '-loglevel', 'warning',
+    '-f', 'dshow',
+    '-rtbufsize', '100M',
+    '-i', $input,
+    '-fflags', 'nobuffer',
+    '-flags', 'low_delay',
+    '-framedrop',
+    '-analyzeduration', '0',
+    '-probesize', '32768',
+    '-vf', 'setpts=0',
+    '-window_title', 'ShadowCast'
+)
+
+Write-Host "`nLaunching. Keys: f = fullscreen, Esc/q = quit, m = mute.`n" -ForegroundColor DarkGray
+& $ffplay @args
