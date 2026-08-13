@@ -8,7 +8,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace ShadowCast;
+namespace Kuroko;
 
 /// <summary>
 /// Tiny localhost HTTP server that hands out the current captured frame.
@@ -38,7 +38,7 @@ internal static class ApiToken
 {
     internal static string Path => System.IO.Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "ShadowCast", "api.token");
+        "Kuroko", "api.token");
 
     /// <summary>Mint a fresh token and publish it for the MCP side to read.</summary>
     internal static string Issue()

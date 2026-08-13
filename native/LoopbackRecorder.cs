@@ -3,7 +3,7 @@ using System.Threading;
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
 
-namespace ShadowCast;
+namespace Kuroko;
 
 /// <summary>
 /// Records the default output endpoint via WASAPI loopback - the exact digital
@@ -15,7 +15,7 @@ namespace ShadowCast;
 /// can distinguish "the discontinuity is in the signal" from "the signal is
 /// fine and something after it is at fault".
 ///
-///   ShadowCast.exe --loopback 60 C:\path\out.wav
+///   Kuroko.exe --loopback 60 C:\path\out.wav
 /// </summary>
 internal static class LoopbackRecorder
 {

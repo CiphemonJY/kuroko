@@ -1,4 +1,4 @@
--- Quick-clip recording for the ShadowCast viewer.
+-- Quick-clip recording for the Kuroko viewer.
 --
 -- In view mode the capture is raw yuyv422 (~15 GB/min), so stream-record's
 -- no-re-encode dump is only sane for short clips. On stop we hand the raw file
@@ -11,7 +11,7 @@ local raw_path = nil
 local function capture_dir()
     local dir = mp.get_property("screenshot-directory")
     if not dir or dir == "" then
-        dir = (os.getenv("USERPROFILE") or ".") .. "\\Videos\\ShadowCast"
+        dir = (os.getenv("USERPROFILE") or ".") .. "\\Videos\\Kuroko"
     end
     return dir
 end
@@ -49,7 +49,7 @@ local function toggle_record()
         args = { "cmd", "/c", 'if not exist "' .. dir .. '" md "' .. dir .. '"' },
     })
 
-    local path = dir .. "\\" .. os.date("ShadowCast-%Y%m%d-%H%M%S.mkv")
+    local path = dir .. "\\" .. os.date("Kuroko-%Y%m%d-%H%M%S.mkv")
     mp.set_property("stream-record", path)
 
     -- stream-record fails silently on an unwritable path; verify it stuck.

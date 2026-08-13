@@ -7,10 +7,10 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 
-namespace ShadowCast;
+namespace Kuroko;
 
 /// <summary>
-/// MCP server, spoken over stdio, hosted by this same exe (`ShadowCast.exe --mcp`).
+/// MCP server, spoken over stdio, hosted by this same exe (`Kuroko.exe --mcp`).
 ///
 /// This replaces the standalone Python server so the app has no external
 /// interpreter dependency. It does NOT capture anything itself: the dongle is
@@ -24,20 +24,20 @@ namespace ShadowCast;
 internal static class McpServer
 {
     private static string Api =>
-        (Environment.GetEnvironmentVariable("SHADOWCAST_API") ?? "http://127.0.0.1:8791").TrimEnd('/');
+        (Environment.GetEnvironmentVariable("KUROKO_API") ?? "http://127.0.0.1:8791").TrimEnd('/');
     private static string Pad =>
-        (Environment.GetEnvironmentVariable("SHADOWCAST_PAD") ?? "").TrimEnd('/');
+        (Environment.GetEnvironmentVariable("KUROKO_PAD") ?? "").TrimEnd('/');
     private static string PadToken =>
-        Environment.GetEnvironmentVariable("SHADOWCAST_PAD_TOKEN") ?? "";
+        Environment.GetEnvironmentVariable("KUROKO_PAD_TOKEN") ?? "";
 
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(15) };
 
     private const string ApiHint =
-        "Could not reach the ShadowCast viewer. Start ShadowCast.exe - it must be running and " +
+        "Could not reach the Kuroko viewer. Start Kuroko.exe - it must be running and " +
         "capturing, because it owns the capture device exclusively.";
     private const string PadHint =
-        "No controller configured. Run deckpad.py on the Steam Deck and set SHADOWCAST_PAD " +
-        "(e.g. http://100.x.x.x:8792) plus SHADOWCAST_PAD_TOKEN (see ~/.deckpad_token).";
+        "No controller configured. Run deckpad.py on the Steam Deck and set KUROKO_PAD " +
+        "(e.g. http://100.x.x.x:8792) plus KUROKO_PAD_TOKEN (see ~/.deckpad_token).";
 
     internal static async Task<int> RunAsync()
     {
@@ -70,7 +70,7 @@ internal static class McpServer
                             ["capabilities"] = new JsonObject { ["tools"] = new JsonObject() },
                             ["serverInfo"] = new JsonObject
                             {
-                                ["name"] = "shadowcast",
+                                ["name"] = "kuroko",
                                 ["version"] = "2.0.0",
                             },
                         });

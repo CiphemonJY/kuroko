@@ -1,4 +1,4 @@
-# Measure ShadowCast capture->screen latency objectively.
+# Measure Kuroko capture->screen latency objectively.
 #
 #   measure-latency.ps1
 #
@@ -57,7 +57,7 @@ $rig = Join-Path $work 'rig.cmd'
 @"
 @echo off
 cd /d "%~dp0"
-"$ff" -hide_banner -loglevel info -use_wallclock_as_timestamps 1 -copyts -f dshow -vcodec mjpeg -video_size 1920x1080 -framerate 60 -rtbufsize 8M -fflags +nobuffer -i "video=ShadowCast 2" -frames:v $($frames + 2400) -map 0:v -c copy -f matroska -flush_packets 1 -muxdelay 0 pipe:1 -frames:v $($frames + 2400) -map 0:v -vf "crop=iw/2:ih/2,scale=32:18,showinfo" -an -f null NUL 2>dev.txt | "$mpv" - --cache=no --profile=low-latency --swapchain-depth=1 --video-sync=desync --config-dir="$cfg" --title=ShadowCast --no-audio --ontop=yes --d3d11-exclusive-fs=no --d3d11-flip=no --autofit=1280x720
+"$ff" -hide_banner -loglevel info -use_wallclock_as_timestamps 1 -copyts -f dshow -vcodec mjpeg -video_size 1920x1080 -framerate 60 -rtbufsize 8M -fflags +nobuffer -i "video=ShadowCast 2" -frames:v $($frames + 2400) -map 0:v -c copy -f matroska -flush_packets 1 -muxdelay 0 pipe:1 -frames:v $($frames + 2400) -map 0:v -vf "crop=iw/2:ih/2,scale=32:18,showinfo" -an -f null NUL 2>dev.txt | "$mpv" - --cache=no --profile=low-latency --swapchain-depth=1 --video-sync=desync --config-dir="$cfg" --title=Kuroko --no-audio --ontop=yes --d3d11-exclusive-fs=no --d3d11-flip=no --autofit=1280x720
 "@ | Set-Content -Path $rig -Encoding ASCII
 
 Write-Host "Starting viewer..." -ForegroundColor Cyan

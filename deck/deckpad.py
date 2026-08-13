@@ -85,7 +85,7 @@ DPAD = {"up": ("haty", -1), "down": ("haty", 1), "left": ("hatx", -1), "right": 
 
 
 class VirtualPad:
-    def __init__(self, name="ShadowCast Virtual Pad"):
+    def __init__(self, name="Kuroko Virtual Pad"):
         self.fd = os.open("/dev/uinput", os.O_WRONLY | os.O_NONBLOCK)
         self._lock = threading.Lock()
 
@@ -207,7 +207,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self._authed():
             return
         if self.path.startswith("/status"):
-            self._json(200, {"ok": True, "device": "ShadowCast Virtual Pad",
+            self._json(200, {"ok": True, "device": "Kuroko Virtual Pad",
                              "buttons": sorted(BUTTONS), "axes": sorted(AXES),
                              "dpad": sorted(DPAD), "pressed": sorted(PAD.pressed),
                              "axis_state": PAD.state})
@@ -315,7 +315,7 @@ def main():
     if bound_host == "0.0.0.0":
         print("WARNING: bound to ALL interfaces - every network this Deck joins "
               "can reach a uinput bridge, with only the token in front of it.")
-    print("Steam should now list 'ShadowCast Virtual Pad' as a controller.")
+    print("Steam should now list 'Kuroko Virtual Pad' as a controller.")
     print("auth token: written to %s (not echoed)" % TOKEN_PATH)
     try:
         srv.serve_forever()

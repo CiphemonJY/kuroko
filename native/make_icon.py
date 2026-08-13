@@ -1,4 +1,4 @@
-"""Generate ShadowCast.ico with no third-party deps (zlib + struct only).
+"""Generate Kuroko.ico with no third-party deps (zlib + struct only).
 
 Draws at 256x256 with 4x supersampling, box-downsamples to each icon size, and
 writes a PNG-payload ICO (Vista+ reads PNG entries directly).
@@ -101,6 +101,6 @@ for n, data in zip(sizes, images):
 for data in images:
     out += data
 
-with open('ShadowCast.ico', 'wb') as f:
+with open('Kuroko.ico', 'wb') as f:
     f.write(out)
-print(f"wrote ShadowCast.ico ({len(out)} bytes, sizes {sizes})")
+print(f"wrote Kuroko.ico ({len(out)} bytes, sizes {sizes})")

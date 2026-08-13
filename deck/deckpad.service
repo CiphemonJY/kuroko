@@ -1,5 +1,5 @@
 [Unit]
-Description=ShadowCast virtual gamepad (uinput bridge for MCP input)
+Description=Kuroko virtual gamepad (uinput bridge for MCP input)
 After=graphical-session.target
 
 [Service]
