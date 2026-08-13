@@ -708,7 +708,13 @@ window.scStatus = () => {
     height: V.videoHeight || 0,
     fps: vt.frameRate ? Math.round(vt.frameRate) : null,
     device: vsel.selectedOptions[0]?.textContent || null,
-    audio: EXTERNAL_AUDIO ? 'ffplay' : (stream?.getAudioTracks().length ? 'browser' : 'none'),
+    // Report the engine the HOST actually runs, not a hardcoded string.
+    // EXTERNAL_AUDIO only means "not in-browser", which is true of native AND
+    // ffplay, so this claimed ffplay while the native path was live. The menu
+    // was fixed for exactly this (see the note above it); /status was missed -
+    // and /status is the surface an agent reads, where a wrong label is not
+    // caught by eye.
+    audio: EXTERNAL_AUDIO ? engine : (stream?.getAudioTracks().length ? 'browser' : 'none'),
     recording: !!(recorder && recorder.state === 'recording'),
     // With external audio the element MUST stay muted: if it also plays, the
     // same sound arrives twice slightly offset and comb-filters into a fizz.
