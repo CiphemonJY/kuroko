@@ -1,7 +1,9 @@
 ﻿using System;
 using System.Diagnostics;
 using System.IO;
+using System.Net.Http;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using Microsoft.Web.WebView2.Core;
@@ -271,6 +273,17 @@ internal sealed class MainForm : Form
         {
             _audioFallback.Stop();
             StopAudio();
+            // Unlink the pad before we go. Leaving it attached would strand a
+            // uinput device on the Deck holding js0 after the app that asked for
+            // it is gone - deckpad's idle timer would eventually clear it, but
+            // "eventually" is not good enough when it is sitting in front of the
+            // controller you are trying to play with. Blocking briefly here is
+            // fine; the window is already closed.
+            if (_padLinked)
+            {
+                try { PadLinkAsync(false).Wait(TimeSpan.FromSeconds(5)); }
+                catch (Exception ex) { Log($"pad unlink on close failed: {ex.Message}"); }
+            }
             _api?.Dispose();
             _audio?.Dispose();       // ffplay's Process handle - never released before
             _audio = null;
@@ -709,6 +722,72 @@ internal sealed class MainForm : Form
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "Kuroko", "settings.json");
 
+    // --- virtual controller on the Deck -------------------------------------
+    // The pad is DETACHED at rest: deckpad creates no input device until asked.
+    // That is the whole point - a permanently-present pad takes js0 ahead of the
+    // Deck's own controller and makes Steam re-shuffle controller defaults
+    // around a device nobody is holding. So the app links it on request and
+    // unlinks on close, and never links as a side effect of anything else.
+    private string _padUrl = (Environment.GetEnvironmentVariable("KUROKO_PAD") ?? "").TrimEnd('/');
+    private bool _padLinked;
+    private static readonly HttpClient _padHttp = new() { Timeout = TimeSpan.FromSeconds(8) };
+
+    /// <summary>Token file, ACL'd to this user - same pattern as the frame API's
+    /// own token. Read fresh each call so rotating it does not need a restart
+    /// (unlike the env var, which is fixed when the MCP child is spawned).</summary>
+    private static string PadToken()
+    {
+        var env = Environment.GetEnvironmentVariable("KUROKO_PAD_TOKEN");
+        if (!string.IsNullOrWhiteSpace(env)) return env.Trim();
+        try
+        {
+            var p = Path.Combine(Environment.GetFolderPath(
+                Environment.SpecialFolder.LocalApplicationData), "Kuroko", "pad.token");
+            return File.Exists(p) ? File.ReadAllText(p).Trim() : "";
+        }
+        catch { return ""; }
+    }
+
+    private async Task<(bool ok, string note)> PadLinkAsync(bool link)
+    {
+        if (string.IsNullOrWhiteSpace(_padUrl))
+            return (false, "No Deck configured - set padUrl in settings.json");
+        var token = PadToken();
+        if (string.IsNullOrWhiteSpace(token))
+            return (false, "No pad token - set KUROKO_PAD_TOKEN or write %LOCALAPPDATA%\\Kuroko\\pad.token");
+        try
+        {
+            var req = new HttpRequestMessage(HttpMethod.Post,
+                $"{_padUrl}/{(link ? "attach" : "detach")}")
+            {
+                Content = new StringContent("{\"reason\":\"kuroko app\"}",
+                                            Encoding.UTF8, "application/json"),
+            };
+            req.Headers.Add("X-Deckpad-Token", token);
+            var res = await _padHttp.SendAsync(req);
+            if (!res.IsSuccessStatusCode)
+                return (false, $"Deck replied {(int)res.StatusCode}");
+            _padLinked = link;
+            Log($"pad {(link ? "linked" : "unlinked")} ({_padUrl})");
+            return (true, link ? "Controller linked on the Deck"
+                               : "Controller unlinked - Steam sees no extra pad");
+        }
+        catch (Exception ex)
+        {
+            // Reaching the Deck can simply fail (asleep, off the tailnet). Report
+            // it in the UI rather than leaving the button spinning forever.
+            Log($"pad {(link ? "attach" : "detach")} failed: {ex.Message}");
+            return (false, "Deck unreachable - is it awake and on the tailnet?");
+        }
+    }
+
+    private void PushPadState(string note = "")
+    {
+        var js = $"window.scPadState && window.scPadState({(_padLinked ? "true" : "false")}," +
+                 $"{System.Text.Json.JsonSerializer.Serialize(note)})";
+        try { _ = _web.CoreWebView2.ExecuteScriptAsync(js); } catch { }
+    }
+
     private void LoadSettings()
     {
         try
@@ -734,6 +813,8 @@ internal sealed class MainForm : Form
                 _audioFix = afx.GetString() ?? "off";
             if (doc.RootElement.TryGetProperty("audioEngine", out var aeng))
                 _audioEngine = aeng.GetString() ?? "native";
+            if (doc.RootElement.TryGetProperty("padUrl", out var pu))
+                _padUrl = (pu.GetString() ?? "").TrimEnd('/');
         }
         // Was a bare `catch { }`: a corrupt settings file silently reverted every
         // preference to defaults with nothing anywhere to explain it.
@@ -746,7 +827,8 @@ internal sealed class MainForm : Form
         {
             Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
             var json = System.Text.Json.JsonSerializer.Serialize(
-                new { saveDir = _saveDir, volume = _volume, audioDelayMs = _audioDelayMs, audioFix = _audioFix, audioEngine = _audioEngine });
+                new { saveDir = _saveDir, volume = _volume, audioDelayMs = _audioDelayMs,
+                      audioFix = _audioFix, audioEngine = _audioEngine, padUrl = _padUrl });
 
             // Write-then-replace. A bare WriteAllText truncates first, so a crash
             // or power loss mid-write leaves a zero-length or half-written file -
@@ -813,6 +895,19 @@ internal sealed class MainForm : Form
                     return;
                 case "win-close":
                     Close();
+                    return;
+                case "pad-link":
+                    {
+                        var link = m.TryGetProperty("link", out var lEl) && lEl.GetBoolean();
+                        _ = Task.Run(async () =>
+                        {
+                            var (ok, note) = await PadLinkAsync(link);
+                            // Back to the UI thread: ExecuteScriptAsync is not
+                            // callable from a pool thread, and the button is
+                            // left disabled until this lands.
+                            BeginInvoke(() => PushPadState(ok ? note : "Link failed: " + note));
+                        });
+                    }
                     return;
                 case "win-top":
                     _onTop = !_onTop;
